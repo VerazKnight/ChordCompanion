@@ -1,6 +1,6 @@
-[submodule "ext/wui"]
-	path = ext/wui
-	url = https://github.com/intent-garden/wui.git
-[submodule "ext/rtmidi"]
-	path = ext/rtmidi
-	url = https://github.com/thestk/rtmidi.git
+[submodule "src/ext/glfw"]
+	path = src/ext/glfw
+	url = https://github.com/glfw/glfw.git
+[submodule "src/ext/imgui"]
+	path = src/ext/imgui
+	url = https://github.com/ocornut/imgui.git
