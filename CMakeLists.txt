@@ -11,6 +11,8 @@ set( GLFW_INSTALL OFF CACHE BOOL "GLFW lib only")
 
 add_subdirectory(src/ext/glfw)
 
+add_subdirectory(src/ext/rtmidi)
+
 find_package(OpenGL REQUIRED)
 
 set(IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/ext/imgui")
@@ -36,6 +38,7 @@ target_include_directories(ChordCompanion PRIVATE
 target_link_libraries(ChordCompanion PRIVATE
     glfw
     OpenGL::GL
+    rtmidi
 )
 
 if(MSVC)

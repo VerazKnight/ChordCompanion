@@ -6,15 +6,17 @@
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 
+#include "RtMidi.h"
+
 static void GlfwErrorCallback(int error, const char* description) {
     std::fprintf(stderr, "GLFW error %d: %s\n", error, description);
 }
 
-int main() {
+bool setup_glfw(const char* &glslVersion, GLFWwindow* &window) {
     glfwSetErrorCallback(GlfwErrorCallback);
 
     if (!glfwInit()) {
-        return 1;
+        return false;
     }
 
 #if defined(__APPLE__)
@@ -23,16 +25,16 @@ int main() {
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
 
-    const char* glslVersion = "#version 150";
+    glslVersion = "#version 150";
 #else
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    const char* glslVersion = "#version 330";
+    glslVersion = "#version 330";
 #endif
 
-    GLFWwindow* window =
+    window =
         glfwCreateWindow(1280, 800, "My App", nullptr, nullptr);
 
     if (window == nullptr) {
@@ -42,6 +44,32 @@ int main() {
 
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
+
+    return true;
+}
+
+void midi_callback( double deltatime, std::vector< unsigned char > *message, void *userData ) {
+  unsigned int nBytes = message->size();
+  // The message has 3 parts:
+  // The first byte appears to be either 144, signaling key pressed, or 128, signaling key release
+  // The second byte is the midi key number
+  // The third byte is the "velocity" v with witch the key was pressed, with v > 0 signaling a key press, and v = 0 signaling key release
+  // We will be using the second and third bytes and ignoring the first
+  std::string press_state = "";
+  if ((int)message->at(2) != 0) {
+    press_state = " Pressed";
+  } else {
+    press_state = " Released";
+  }
+  std::cout << "Midi Key: " << (int)message->at(1) << press_state << std::endl;
+}
+
+int main() {
+    const char* glslVersion = nullptr;
+    GLFWwindow* window = nullptr;
+    if (!setup_glfw(glslVersion, window)) {
+        std::fprintf(stderr, "GLFW failed to setup");
+    }
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -55,6 +83,26 @@ int main() {
     ImGui_ImplOpenGL3_Init(glslVersion);
 
     bool running = true;
+
+    // rtmidi
+    RtMidiIn *midiin = new RtMidiIn();
+    
+    // Check available ports.
+    unsigned int nPorts = midiin->getPortCount();
+    if ( nPorts == 0 ) {
+        std::cout << "No ports available!\n";
+        return 1;
+    }
+    
+    midiin->openPort( 0 );
+    
+    // Set our callback function.  This should be done immediately after
+    // opening the port to avoid having incoming messages written to the
+    // queue.
+    midiin->setCallback(&midi_callback);
+    
+    // Don't ignore sysex, timing, or active sensing messages.
+    midiin->ignoreTypes( false, false, false );
 
     while (running && !glfwWindowShouldClose(window)) {
         if (glfwGetWindowAttrib(window, GLFW_ICONIFIED)) {
@@ -91,6 +139,8 @@ int main() {
 
     glfwDestroyWindow(window);
     glfwTerminate();
+
+    delete midiin;
 
     return 0;
 }

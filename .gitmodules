@@ -4,3 +4,6 @@
 [submodule "src/ext/imgui"]
 	path = src/ext/imgui
 	url = https://github.com/ocornut/imgui.git
+[submodule "src/ext/rtmidi"]
+	path = src/ext/rtmidi
+	url = https://github.com/thestk/rtmidi.git
