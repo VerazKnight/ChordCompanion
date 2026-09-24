@@ -8,6 +8,9 @@
 
 #include "RtMidi.h"
 
+bool one = false;
+bool two = false;
+
 static void GlfwErrorCallback(int error, const char* description) {
     std::fprintf(stderr, "GLFW error %d: %s\n", error, description);
 }
@@ -62,6 +65,8 @@ void midi_callback( double deltatime, std::vector< unsigned char > *message, voi
     press_state = " Released";
   }
   std::cout << "Midi Key: " << (int)message->at(1) << press_state << std::endl;
+
+  //std::cout << (int)message->at(0) << "  " << (int)message->at(1) << "  " << (int)message->at(2) << std::endl;
 }
 
 int main() {
@@ -91,18 +96,22 @@ int main() {
     unsigned int nPorts = midiin->getPortCount();
     if ( nPorts == 0 ) {
         std::cout << "No ports available!\n";
-        return 1;
     }
     
-    midiin->openPort( 0 );
-    
-    // Set our callback function.  This should be done immediately after
-    // opening the port to avoid having incoming messages written to the
-    // queue.
-    midiin->setCallback(&midi_callback);
-    
-    // Don't ignore sysex, timing, or active sensing messages.
-    midiin->ignoreTypes( false, false, false );
+    if (nPorts > 0) {
+        midiin->openPort( 0 );
+        
+        // Set our callback function.  This should be done immediately after
+        // opening the port to avoid having incoming messages written to the
+        // queue.
+        midiin->setCallback(&midi_callback);
+        
+        // Don't ignore sysex, timing, or active sensing messages.
+        midiin->ignoreTypes( false, false, false );
+    }
+
+    float test_float = 0.0;
+    int counter = 0;
 
     while (running && !glfwWindowShouldClose(window)) {
         if (glfwGetWindowAttrib(window, GLFW_ICONIFIED)) {
@@ -117,6 +126,33 @@ int main() {
         ImGui::NewFrame();
 
         ImGui::ShowDemoWindow();
+
+        {
+            ImGui::Begin("Hello, world!");                          // Create a window called "Hello, world!" and append into it.
+
+            ImGui::Text("This is some useful text.");               // Display some text (you can use a format strings too)
+            ImGui::Checkbox("Demo Window", &one);      // Edit bools storing our window open/close state
+            ImGui::Checkbox("Another Window", &two);
+
+            ImGui::SliderFloat("float", &test_float, 0.0f, 1.0f);            // Edit 1 float using a slider from 0.0f to 1.0f
+
+            float availableWidth = ImGui::GetContentRegionAvail().x;
+
+            if (ImGui::Button("Button", ImVec2(0.1 * availableWidth, 50.0)))                            // Buttons return true when clicked (most widgets return true when edited/activated)
+                counter++;
+            ImGui::SameLine();
+            ImGui::Text("counter = %d", counter);
+
+            ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
+            ImGui::End();
+        }
+        
+        {
+            ImGui::Begin("New Window");
+            float windowWidth = ImGui::GetContentRegionAvail().x;
+            ImGui::Text("Window width %.1f", windowWidth);
+            ImGui::End();
+        }
 
         ImGui::Render();
 
