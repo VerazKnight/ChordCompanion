@@ -9,6 +9,17 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set( GLFW_BUILD_DOCS OFF CACHE BOOL "GLFW lib only")
 set( GLFW_INSTALL OFF CACHE BOOL "GLFW lib only")
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_package(ALSA REQUIRED)
+
+    set(RTMIDI_API_ALSA ON CACHE BOOL "Enable ALSA MIDI backend" FORCE)
+    set(RTMIDI_API_JACK OFF CACHE BOOL "Disable JACK MIDI backend" FORCE)
+elseif(WIN32)
+    set(RTMIDI_API_WINMM ON CACHE BOOL "Enable Windows MIDI backend" FORCE)
+elseif(APPLE)
+    set(RTMIDI_API_CORE ON CACHE BOOL "Enable CoreMIDI backend" FORCE)
+endif()
+
 add_subdirectory(src/ext/glfw)
 
 add_subdirectory(src/ext/rtmidi)
