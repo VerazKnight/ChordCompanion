@@ -144,6 +144,9 @@ int main() {
     // Don't ignore sysex, timing, or active sensing messages.
     midiin->ignoreTypes( false, false, false );
 
+    float test_float = 0;
+    int counter = 0;
+
     while (running && !glfwWindowShouldClose(window)) {
         if (glfwGetWindowAttrib(window, GLFW_ICONIFIED)) {
             glfwWaitEventsTimeout(0.1);
