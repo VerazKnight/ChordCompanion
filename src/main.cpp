@@ -295,6 +295,7 @@ int main() {
     glfwTerminate();
 
     delete midiin;
+    
 
     return 0;
 }
