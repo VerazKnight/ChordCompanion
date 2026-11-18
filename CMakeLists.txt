@@ -1,5 +1,30 @@
 cmake_minimum_required(VERSION 3.28)
 
+set(VCPKG_ROOT "${CMAKE_SOURCE_DIR}/src/ext/vcpkg")
+
+if(WIN32)
+  set(VCPKG_EXE "${VCPKG_ROOT}/vcpkg.exe")
+  set(BOOTSTRAP_SCRIPT "${VCPKG_ROOT}/bootstrap-vcpkg.bat")
+else()
+  set(VCPKG_EXE "${VCPKG_ROOT}/vcpkg")
+  set(BOOTSTRAP_SCRIPT "${VCPKG_ROOT}/bootstrap-vcpkg.sh")
+endif()
+
+if(NOT EXISTS "${VCPKG_EXE}")
+  message(STATUS "vcpkg not bootstrapped, running bootstrap script...")
+  execute_process(
+    COMMAND ${BOOTSTRAP_SCRIPT}
+    WORKING_DIRECTORY "${VCPKG_ROOT}"
+    RESULT_VARIABLE BOOTSTRAP_RESULT
+  )
+  if(NOT BOOTSTRAP_RESULT EQUAL 0)
+    message(FATAL_ERROR "vcpkg bootstrap failed")
+  endif()
+endif()
+
+set(CMAKE_TOOLCHAIN_FILE "${CMAKE_SOURCE_DIR}/src/ext/vcpkg/scripts/buildsystems/vcpkg.cmake"
+    CACHE STRING "Vcpkg toolchain file")
+
 project(ChordCompanion LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -26,7 +51,19 @@ add_subdirectory(src/ext/rtmidi)
 
 find_package(OpenGL REQUIRED)
 
+find_package(FluidSynth CONFIG REQUIRED)
+
 set(IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/ext/imgui")
+
+add_library(app_core
+    src/mainApp.cpp
+    src/ui.cpp
+    src/pianoKeyboard.cpp
+    src/pianoSound.cpp
+    src/chordLogic.cpp
+)
+
+target_include_directories(app_core PUBLIC src)
 
 add_executable(ChordCompanion 
     src/main.cpp
@@ -47,10 +84,17 @@ target_include_directories(ChordCompanion PRIVATE
 )
 
 target_link_libraries(ChordCompanion PRIVATE
+    app_core
     glfw
     OpenGL::GL
     rtmidi
+    FluidSynth::libfluidsynth
 )
+
+# TODO:
+# add_executable(unit_tests
+
+# )
 
 if(MSVC)
     target_compile_options(ChordCompanion PRIVATE /W4)
