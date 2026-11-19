@@ -1,4 +1,4 @@
-
+#include "pianoKeyboard.hpp"
 
 class MainApp {
 public:
@@ -6,5 +6,5 @@ public:
     void update(); 
 
 private:
-    //PianoKeyboard keyboard;
+    PianoKeyboard keyboard;
 };

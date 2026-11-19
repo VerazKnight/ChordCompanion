@@ -6,12 +6,12 @@
 class PianoKeyboard {
 public:
     void setup();
-    static void handleMIDI(double, std::vector<unsigned char>, void*);
-    void setPressedKeys(std::span<const int>);
-    void releasedPressedKeys(std::span<const int>);
+    static void handleMIDI(double deltatime, std::vector<unsigned char> *message, void *userData);
+    void setPressedKeys(std::span<const int> keys);
+    void releasedPressedKeys(std::span<const int> keys);
     std::unordered_set<int> getPressedKeys();
 private:
     std::unordered_set<int> pressedKeys;
-    RtMidiIn midiDevice;
+    RtMidiIn* midiDevice = nullptr;
     // PianoSound sound;
 };
