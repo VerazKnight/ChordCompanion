@@ -50,6 +50,10 @@ private:
     void computeGlow(const std::unordered_set<int>& pressedKeys);
     void changeMode(Mode newMode);
 
+    void drawHeader();
+    void drawChordStrip(const std::unordered_set<int>& pressedKeys, ImVec2 size);
+    void toggleFullscreen();
+    std::string displayLabel() const;
     void drawModeChooser();
     void drawModeBar();
     void drawStatusBox(ImVec2 size);
@@ -66,6 +70,13 @@ private:
     bool connected = false;
 
     Mode mode = Mode::Unset;
+
+    // ---- window size and layout ----
+    bool narrow = false;              // narrow or tall window: one column
+    bool bigKeyboard = false;         // the piano fills the window (B key)
+    bool fullscreen = false;          // F11
+    bool wantFullscreenToggle = false;
+    int windowedX = 100, windowedY = 100, windowedW = 1280, windowedH = 880;
 
     // Keys held with the mouse (held + latched) and with the computer keyboard.
     std::unordered_set<int> mouseKeys;
@@ -100,6 +111,10 @@ private:
     int highlightType = -1;
     int highlightInversion = 0;
     int highlightRootPc = -1;         // -1 = use the pressed note's name
+
+    // The inversion box example: -1 = follow what the player plays.
+    int exampleRootPc = -1;
+    int exampleType = 0;
 
     std::vector<int> glowNotes;       // piano keys drawn with a yellow glow
     std::string glowCaption;
