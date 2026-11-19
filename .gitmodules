@@ -7,3 +7,6 @@
 [submodule "src/ext/rtmidi"]
 	path = src/ext/rtmidi
 	url = https://github.com/thestk/rtmidi.git
+[submodule "src/ext/vcpkg"]
+	path = src/ext/vcpkg
+	url = https://github.com/microsoft/vcpkg.git
