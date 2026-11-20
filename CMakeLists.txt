@@ -31,8 +31,8 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-set( GLFW_BUILD_DOCS OFF CACHE BOOL "GLFW lib only")
-set( GLFW_INSTALL OFF CACHE BOOL "GLFW lib only")
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "GLFW lib only")
+set(GLFW_INSTALL OFF CACHE BOOL "GLFW lib only")
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     find_package(ALSA REQUIRED)
@@ -63,7 +63,44 @@ add_library(app_core
     src/chordLogic.cpp
 )
 
+set(SOUNDFONT_FILE
+    "${CMAKE_CURRENT_SOURCE_DIR}/resources/GeneralUser-GS.sf2"
+)
+set(SOUNDFONT_SCRIPT
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedSoundFont.cmake"
+)
+set(GENERATED_INCLUDE_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/generated"
+)
+set(SOUNDFONT_HEADER
+    "${GENERATED_INCLUDE_DIR}/embedded_sf2.h"
+)
+
+add_custom_command(
+    OUTPUT "${SOUNDFONT_HEADER}"
+    COMMAND "${CMAKE_COMMAND}"
+        "-DINPUT_FILE=${SOUNDFONT_FILE}"
+        "-DOUTPUT_FILE=${SOUNDFONT_HEADER}"
+        -P "${SOUNDFONT_SCRIPT}"
+    DEPENDS
+        "${SOUNDFONT_FILE}"
+        "${SOUNDFONT_SCRIPT}"
+    COMMENT "Embedding GeneralUser-GS.sf2"
+    VERBATIM
+)
+
+target_sources(app_core PRIVATE "${SOUNDFONT_HEADER}")
+
+target_include_directories(app_core PRIVATE "${GENERATED_INCLUDE_DIR}")
+
 target_include_directories(app_core PUBLIC src)
+
+target_link_libraries(app_core PUBLIC 
+    glfw
+    OpenGL::GL
+    rtmidi
+    FluidSynth::libfluidsynth
+)
 
 add_executable(ChordCompanion 
     src/main.cpp
@@ -85,10 +122,6 @@ target_include_directories(ChordCompanion PRIVATE
 
 target_link_libraries(ChordCompanion PRIVATE
     app_core
-    glfw
-    OpenGL::GL
-    rtmidi
-    FluidSynth::libfluidsynth
 )
 
 # TODO:
