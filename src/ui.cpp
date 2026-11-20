@@ -10,6 +10,13 @@
 
 namespace CT = ChordTheory;
 
+// On a Mac, taking over the whole monitor leaves a stretched, blurry picture
+// when the player leaves fullscreen. So there the "Fullscreen" button just
+// maximizes the window and restores it, which is reliable.
+#if defined(__APPLE__) || defined(CHORD_USE_MAXIMIZE)
+#define CHORD_MAXIMIZE_INSTEAD 1
+#endif
+
 // ------------------------------------------------------------------ palette
 // One small set of colors used everywhere, so the whole window looks alike.
 
@@ -296,6 +303,7 @@ void UI::changeMode(Mode newMode) {
     suggestRequested = false;
     selectedSuggestion = -1;
     feedback.clear();
+    noticeVisible = false;
     highlightType = -1;
     highlightRootPc = -1;
     lastChangeTime = ImGui::GetCurrentContext() ? ImGui::GetTime() : 0.0;
@@ -315,6 +323,14 @@ void UI::toggleFullscreen() {
     if (window == nullptr) {
         return;
     }
+#ifdef CHORD_MAXIMIZE_INSTEAD
+    if (!fullscreen) {
+        glfwMaximizeWindow(window);
+    } else {
+        glfwRestoreWindow(window);
+    }
+    return;
+#endif
     if (!fullscreen) {
         glfwGetWindowPos(window, &windowedX, &windowedY);
         glfwGetWindowSize(window, &windowedW, &windowedH);
@@ -351,6 +367,11 @@ void UI::update(PianoKeyboard keyboard) {
     }
 
     glfwPollEvents();
+
+#ifdef CHORD_MAXIMIZE_INSTEAD
+    // The green window button can also maximize, so follow the real state.
+    fullscreen = (glfwGetWindowAttrib(window, GLFW_MAXIMIZED) == GLFW_TRUE);
+#endif
 
     // Changing fullscreen is done here, between frames.
     if (wantFullscreenToggle) {
@@ -466,6 +487,8 @@ void UI::update(PianoKeyboard keyboard) {
 
     ImGui::End();
 
+    drawNotice();
+
     ImGui::Render();
 
     int framebufferWidth = 0;
@@ -531,9 +554,25 @@ void UI::buildSuggestions() {
     bridgeText.clear();
     if (!history.empty() && keyPc >= 0) {
         const CT::PlayedChord& last = history.back();
-        suggestions = CT::suggestNext(keyPc, last.rootPc, last.typeIndex);
-        bridgeText = CT::bridgeMessage(keyPc, last.rootPc, last.typeIndex);
+
+        // Teach from where the player is. If the last chord is in the key,
+        // the ideas are in that key. If it is not, the ideas start fresh from
+        // that chord: a major chord is treated as "home", a minor chord as
+        // the sixth chord of its relative major.
+        ideasKeyPc = keyPc;
+        if (!CT::isDiatonic(keyPc, last.rootPc, last.typeIndex)) {
+            if (last.typeIndex == CT::MINOR) {
+                ideasKeyPc = CT::pitchClass(last.rootPc + 3);
+            } else if (last.typeIndex == CT::DIMINISHED) {
+                ideasKeyPc = CT::pitchClass(last.rootPc + 1);
+            } else {
+                ideasKeyPc = last.rootPc;
+            }
+            bridgeText = CT::bridgeMessage(keyPc, last.rootPc, last.typeIndex);
+        }
+        suggestions = CT::suggestNext(ideasKeyPc, last.rootPc, last.typeIndex);
     } else {
+        ideasKeyPc = 0;
         suggestions = starterChords();
     }
     suggestionsVisible = true;
@@ -547,14 +586,14 @@ std::string UI::makeFeedback(int oldKeyPc, const CT::IdentifiedChord& played) co
     std::string name = CT::chordName(played.rootPc, played.typeIndex);
     for (size_t i = 0; i < suggestions.size(); i++) {
         if (suggestions[i].rootPc == played.rootPc && suggestions[i].typeIndex == played.typeIndex) {
-            return "Nice! " + name + " was idea " + std::to_string(i + 1) + ".";
+            return "Nice! " + name + " was idea " + std::to_string(i + 1) + ". You are getting it!";
         }
     }
     if (oldKeyPc >= 0 && CT::isDiatonic(oldKeyPc, played.rootPc, played.typeIndex)) {
-        return name + " was not on the list, but it fits the key. Going your own way is great.";
+        return "Oh, " + name + "! Not on the list, but it fits the key. Love the detour.";
     }
     if (oldKeyPc >= 0) {
-        return name + " is outside the key. That adds color, and it is totally fine.";
+        return "Ooh, " + name + " steps outside the key. Bold! That adds color, keep going.";
     }
     return name + " is a fine choice. Play on!";
 }
@@ -584,20 +623,50 @@ void UI::updateAnalysis(const std::unordered_set<int>& pressedKeys) {
             } else {
                 feedback.clear();
             }
+
+            // Was this chord outside the key the player has been playing in?
+            // (Only after a few chords, so the key is not just a guess.)
+            bool outside = (mode == Mode::Learner) && oldKeyPc >= 0 && history.size() >= 3 &&
+                           !CT::isDiatonic(oldKeyPc, identified.rootPc, identified.typeIndex);
+
             history.push_back(CT::PlayedChord{ identified.rootPc, identified.typeIndex });
             if (history.size() > 8) {
                 history.erase(history.begin());
             }
-            // The old ideas are done. New ones can appear after the next pause.
+
+            // The old ideas and highlights are done as soon as the player
+            // plays something. New ones can appear after the next pause.
             suggestionsVisible = false;
             suggestRequested = false;
             selectedSuggestion = -1;
+
+            if (outside) {
+                noticeVisible = true;
+                noticeChord = CT::PlayedChord{ identified.rootPc, identified.typeIndex };
+                noticeKeyPc = oldKeyPc;
+                noticeTime = now;
+            } else if (noticeVisible && oldKeyPc >= 0 &&
+                       CT::isDiatonic(oldKeyPc, identified.rootPc, identified.typeIndex)) {
+                noticeVisible = false;  // back in the key, no need for the note
+            }
+        }
+        if (identified.found && mode == Mode::Learner) {
+            checkPractice(identified);
         }
         currentChord = identified;
         keyPc = CT::detectKey(history);
     }
 
+    if (!practiceMsg.empty() && now - practiceTime > 10.0) {
+        practiceMsg.clear();
+    }
+
     pausedFor = now - lastChangeTime;
+
+    // The note about a chord outside the key fades by itself.
+    if (noticeVisible && now - noticeTime > 14.0) {
+        noticeVisible = false;
+    }
 
     // Learner mode only. Ideas appear after a pause (if turned on) or when
     // the player asks. They stay until a new chord is played.
@@ -607,6 +676,44 @@ void UI::updateAnalysis(const std::unordered_set<int>& pressedKeys) {
             buildSuggestions();
             suggestedByPause = byPause && !suggestRequested;
         }
+    }
+}
+
+// The player chose a chord to practice (Show button). Answer like a friend:
+// cheer when it is right, give a small tip when it is close, and never stop
+// them from playing anything else.
+void UI::checkPractice(const CT::IdentifiedChord& played) {
+    if (highlightType < 0 || highlightRootPc < 0) {
+        return;
+    }
+    std::string target = CT::chordName(highlightRootPc, highlightType);
+    std::string playedName = CT::chordName(played.rootPc, played.typeIndex);
+    practiceTime = ImGui::GetTime();
+
+    if (played.rootPc == highlightRootPc && played.typeIndex == highlightType) {
+        if (played.inversion == highlightInversion) {
+            practiceMsg = "Yes! " + target + ", " + CT::inversionName(highlightInversion) +
+                          ". Nailed it! Pick another one to keep going.";
+            practiceMood = 1;
+            highlightType = -1;
+            highlightRootPc = -1;
+        } else {
+            std::vector<int> want = CT::chordNotes(highlightRootPc, highlightType, highlightInversion);
+            practiceMsg = "So close! That is " + target + ", but in " +
+                          CT::inversionName(played.inversion) + ". For " +
+                          CT::inversionName(highlightInversion) + " put " +
+                          CT::pitchClassName(CT::pitchClass(want.front())) + " at the bottom.";
+            practiceMood = 2;
+        }
+    } else {
+        // They moved on to something else. That is fine: let the glow go and
+        // let the box follow what they play again.
+        practiceMsg = "Oh, you went with " + playedName + " instead of " + target +
+                      ". No problem! Press Show again whenever you want to try it.";
+        practiceMood = 2;
+        highlightType = -1;
+        highlightRootPc = -1;
+        exampleRootPc = -1;
     }
 }
 
@@ -624,7 +731,7 @@ void UI::computeGlow(const std::unordered_set<int>& pressedKeys) {
         shown = 0;  // by default show the first idea
     }
 
-    if (suggestionsVisible && shown >= 0 && shown < static_cast<int>(suggestions.size())) {
+    if (highlightType < 0 && suggestionsVisible && shown >= 0 && shown < static_cast<int>(suggestions.size())) {
         const CT::Suggestion& s = suggestions[shown];
         glowNotes = CT::chordNotes(s.rootPc, s.typeIndex, 0);
         glowCaption = "Glowing = " + CT::chordName(s.rootPc, s.typeIndex) + " (an idea, not a rule)";
@@ -639,7 +746,7 @@ void UI::computeGlow(const std::unordered_set<int>& pressedKeys) {
         }
         glowNotes = CT::chordNotes(root, highlightType, highlightInversion);
         glowCaption = "Glowing = " + CT::chordName(root, highlightType) + ", " +
-                      CT::inversionName(highlightInversion);
+                      CT::inversionName(highlightInversion) + " (your pick)";
     }
 }
 
@@ -737,6 +844,10 @@ void UI::drawModeBar() {
         ImGui::SameLine();
     }
 
+    // Note names on the keys: useful in both modes.
+    ImGui::Checkbox("Note names", &showNoteNames);
+    ImGui::SameLine();
+
     if (mode == Mode::Learner) {
         ImGui::Checkbox("Ideas when I pause", &autoSuggest);
         ImGui::SameLine();
@@ -751,7 +862,11 @@ void UI::drawModeBar() {
     // Buttons for the size of the keyboard. On a wide window they sit at the
     // right edge, on a narrow one they get their own line.
     const char* bigLabel = bigKeyboard ? "Exit big keyboard" : "Big keyboard";
+#ifdef CHORD_MAXIMIZE_INSTEAD
+    const char* fullLabel = fullscreen ? "Restore window" : "Maximize window";
+#else
     const char* fullLabel = fullscreen ? "Exit fullscreen" : "Fullscreen";
+#endif
     const char* releaseLabel = "Release all keys";
     if (!narrow) {
         float padding = ImGui::GetStyle().FramePadding.x * 2.0f;
@@ -773,7 +888,7 @@ void UI::drawModeBar() {
         wantFullscreenToggle = true;
     }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Use the whole screen (shortcut: F11)");
+        ImGui::SetTooltip("Make the window fill the screen (shortcut: F11)");
     }
     ImGui::SameLine();
     if (ImGui::Button(releaseLabel)) {
@@ -814,6 +929,68 @@ void UI::drawChordStrip(const std::unordered_set<int>& pressedKeys, ImVec2 size)
     ImGui::PopStyleColor();
 
     ImGui::EndChild();
+}
+
+// A small box at the side. It never blocks the playing: the player can ignore
+// it, and it fades away by itself.
+void UI::drawNotice() {
+    if (!noticeVisible || mode != Mode::Learner) {
+        return;
+    }
+
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    float margin = 20.0f;
+    if (narrow) {
+        ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - margin,
+                                       viewport->WorkPos.y + viewport->WorkSize.y - margin),
+                                ImGuiCond_Always, ImVec2(1.0f, 1.0f));
+    } else {
+        ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - margin,
+                                       viewport->WorkPos.y + 116.0f),
+                                ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+    }
+
+    float wrapWidth = std::min(380.0f, viewport->WorkSize.x - 80.0f);
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.5f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f, 14.0f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, vec4(IM_COL32(32, 28, 20, 245)));
+    ImGui::PushStyleColor(ImGuiCol_Border, vec4(COLOR_AMBER));
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
+                             ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
+                             ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
+    if (ImGui::Begin("OutsideKeyNotice", nullptr, flags)) {
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + wrapWidth);
+
+        ImGui::TextColored(vec4(COLOR_AMBER), "Outside the key");
+        ImGui::PushStyleColor(ImGuiCol_Text, vec4(COLOR_MUTED));
+        ImGui::TextWrapped("%s is not in %s major. That is fine, keep playing.",
+                           CT::chordName(noticeChord.rootPc, noticeChord.typeIndex).c_str(),
+                           CT::pitchClassName(noticeKeyPc).c_str());
+        ImGui::PopStyleColor();
+        ImGui::Spacing();
+
+        if (ImGui::Button("Keep playing")) {
+            noticeVisible = false;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Start fresh here")) {
+            // Forget the old chords so the key is worked out from this chord on.
+            history.clear();
+            history.push_back(noticeChord);
+            keyPc = CT::detectKey(history);
+            noticeVisible = false;
+        }
+
+        ImGui::PopTextWrapPos();
+    }
+    ImGui::End();
+
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar(3);
 }
 
 // ------------------------------------------------------------------- cards
@@ -965,7 +1142,7 @@ void UI::drawPianoBox(const std::unordered_set<int>& pressedKeys, ImVec2 size) {
         legendWidth += 18.0f + ImGui::CalcTextSize(type.name.c_str()).x + 22.0f;
     }
     legendWidth += 20.0f + ImGui::CalcTextSize("Highlighted chord").x;
-    bool legendInHeader = (mode == Mode::Learner) && (windowWidth > legendWidth + 280.0f);
+    bool legendInHeader = (mode == Mode::Learner) && (windowWidth > legendWidth + 620.0f);
 
     // Make the piano as big as the box allows. The sizes in pianoLayout.hpp
     // are for scale 1. "scale" is used sideways and "scaleY" up and down, so
@@ -1103,11 +1280,12 @@ void UI::drawPianoBox(const std::unordered_set<int>& pressedKeys, ImVec2 size) {
                               KEY_LABEL, letter);
             labelY -= labelSize + 4.0f;
         }
-        if (note % 12 == 0) {
+        // Note name: every key when "Note names" is on, otherwise only the C keys.
+        if (showNoteNames || note % 12 == 0) {
             std::string name = noteName(note);
             float w = textWidth(labelSize, name.c_str());
             drawList->AddText(font, labelSize, ImVec2(x + (whiteWidth - w) * 0.5f, labelY),
-                              COLOR_ACCENT, name.c_str());
+                              note % 12 == 0 ? COLOR_ACCENT : COLOR_MUTED, name.c_str());
         }
     }
 
@@ -1138,12 +1316,22 @@ void UI::drawPianoBox(const std::unordered_set<int>& pressedKeys, ImVec2 size) {
             drawList->AddRect(topLeft, bottomRight, COLOR_GOLD, 4.0f, ImDrawFlags_RoundCornersBottom, 2.5f);
         }
 
+        float blackLabelY = bottomRight.y - 10.0f * scale - labelSize * 0.5f - 2.0f;
         const char* letter = computerKeyLetter(note - octaveShift);
         if (letter[0] != '\0') {
             float w = textWidth(labelSize, letter);
-            drawList->AddText(font, labelSize,
-                              ImVec2(x + (width - w) * 0.5f, bottomRight.y - 10.0f * scale - labelSize * 0.5f - 2.0f),
+            drawList->AddText(font, labelSize, ImVec2(x + (width - w) * 0.5f, blackLabelY),
                               IM_COL32(190, 196, 212, 255), letter);
+        }
+        blackLabelY -= labelSize + 3.0f;  // note name always sits on the same line
+        if (showNoteNames) {
+            std::string name = noteName(note);  // e.g. C#4, shown as C#
+            while (!name.empty() && std::isdigit(static_cast<unsigned char>(name.back()))) {
+                name.pop_back();
+            }
+            float w = textWidth(labelSize, name.c_str());
+            drawList->AddText(font, labelSize, ImVec2(x + (width - w) * 0.5f, blackLabelY),
+                              IM_COL32(150, 160, 185, 255), name.c_str());
         }
     }
 
@@ -1241,6 +1429,7 @@ void UI::drawChordHelperBox(const std::unordered_set<int>& pressedKeys, ImVec2 s
     if (ImGui::Combo("Highlight chord", &typeChoice, typeItems, 5)) {
         highlightType = typeChoice - 1;
         highlightRootPc = -1;
+        practiceMsg.clear();
     }
 
     const char* inversionItems[] = { "Root position", "1st inversion", "2nd inversion" };
@@ -1325,7 +1514,8 @@ void UI::drawSuggestionBox(ImVec2 size) {
             ImGui::PopStyleColor();
         } else {
             ImGui::PushStyleColor(ImGuiCol_Text, amber);
-            ImGui::TextWrapped("Not sure what comes next? Some ideas (you can play anything):");
+            ImGui::TextWrapped("Some ideas in %s major (you can play anything):",
+                               CT::pitchClassName(ideasKeyPc).c_str());
             ImGui::PopStyleColor();
         }
         ImDrawList* drawList = ImGui::GetWindowDrawList();
@@ -1368,8 +1558,17 @@ void UI::drawSuggestionBox(ImVec2 size) {
 void UI::drawInversionBox(ImVec2 size) {
     beginCard("InversionBox", size, "WHAT IS AN INVERSION?");
 
-    ImGui::TextWrapped("The same chord can have a different note at the bottom. "
-                       "The notes stay the same, only the order changes.");
+    if (!practiceMsg.empty()) {
+        // A friendly reply replaces the intro text while it is showing.
+        ImVec4 col = practiceMood == 1 ? vec4(COLOR_GREEN)
+                   : practiceMood == 2 ? vec4(COLOR_AMBER) : vec4(COLOR_ACCENT);
+        ImGui::PushStyleColor(ImGuiCol_Text, col);
+        ImGui::TextWrapped("%s", practiceMsg.c_str());
+        ImGui::PopStyleColor();
+    } else {
+        ImGui::TextWrapped("The same chord can have a different note at the bottom. "
+                           "The notes stay the same, only the order changes.");
+    }
     ImGui::Spacing();
 
     // Pick any chord to see its inversions. "Auto" follows what is being
@@ -1399,6 +1598,14 @@ void UI::drawInversionBox(ImVec2 size) {
         base = history.back();
     }
     ImGui::TextColored(vec4(COLOR_ACCENT), "%s", CT::chordName(base.rootPc, base.typeIndex).c_str());
+    if (highlightType >= 0) {
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Clear glow")) {
+            highlightType = -1;
+            highlightRootPc = -1;
+            practiceMsg.clear();
+        }
+    }
 
     for (int inversion = 0; inversion < 3; inversion++) {
         ImGui::PushID(inversion);
@@ -1421,6 +1628,13 @@ void UI::drawInversionBox(ImVec2 size) {
             highlightType = base.typeIndex;
             highlightRootPc = base.rootPc;
             highlightInversion = inversion;
+            // Keep this chord in the box, even after other chords are played.
+            exampleRootPc = base.rootPc;
+            exampleType = base.typeIndex;
+            practiceMsg = "Go ahead and play " + CT::chordName(base.rootPc, base.typeIndex) + ", " +
+                          CT::inversionName(inversion) + ". Take your time!";
+            practiceMood = 0;
+            practiceTime = ImGui::GetTime();
         }
 
         ImGui::PopID();

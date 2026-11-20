@@ -51,6 +51,7 @@ private:
     void changeMode(Mode newMode);
 
     void drawHeader();
+    void drawNotice();
     void drawChordStrip(const std::unordered_set<int>& pressedKeys, ImVec2 size);
     void toggleFullscreen();
     std::string displayLabel() const;
@@ -90,6 +91,7 @@ private:
     double pausedFor = 0.0;           // seconds since then
     bool hasPlayed = false;           // has anything been pressed yet?
     bool autoSuggest = true;          // show ideas after a pause
+    bool showNoteNames = true;        // note names on every key
     bool showDots = true;             // show the colored dots
     std::unordered_set<int> lastPressed;
 
@@ -115,6 +117,21 @@ private:
     // The inversion box example: -1 = follow what the player plays.
     int exampleRootPc = -1;
     int exampleType = 0;
+
+    // A small, non-blocking note shown when a chord is outside the key.
+    // The player can ignore it; it fades by itself.
+    bool noticeVisible = false;
+    ChordTheory::PlayedChord noticeChord;
+    int noticeKeyPc = -1;             // the key the chord does not belong to
+    double noticeTime = 0.0;
+    int ideasKeyPc = 0;               // the key the ideas are given in
+
+    // Practice: the player picked a chord to try (Show button). It stays until
+    // they get it or press Clear. Playing other chords in between is fine.
+    std::string practiceMsg;
+    int practiceMood = 0;             // 0 hint, 1 happy, 2 oops (friendly)
+    double practiceTime = 0.0;
+    void checkPractice(const ChordTheory::IdentifiedChord& played);
 
     std::vector<int> glowNotes;       // piano keys drawn with a yellow glow
     std::string glowCaption;
