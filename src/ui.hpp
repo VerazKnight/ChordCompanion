@@ -7,7 +7,6 @@
 #include "imgui_impl_opengl3.h"
 
 #include "chordTheory.hpp"
-#include "pianoKeyboard.hpp"
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -17,7 +16,8 @@ public:
     static void GlfwErrorCallback(int error, const char* description);
     void setup();
 
-    void update(PianoKeyboard keyboard);
+    // Draw combined notes, but return only notes owned by mouse/computer input.
+    std::unordered_set<int> update(std::unordered_set<int> pressedKeys = {});
     void setChordLabel(std::string newLabel);
 
     // ---- Added for the UI work (small additions to the original header) ----

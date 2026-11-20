@@ -339,15 +339,21 @@ std::string UI::displayLabel() const {
     return chordLabel;
 }
 
-void UI::update(PianoKeyboard keyboard) {
+std::unordered_set<int> UI::update(std::unordered_set<int> pressedKeys) {
     if (window == nullptr) {
-        return;
+        mouseKeys.clear();
+        mouseLatched.clear();
+        computerKeys.clear();
+        return {};
     }
 
     // Do not draw while the window is minimized.
     if (glfwGetWindowAttrib(window, GLFW_ICONIFIED)) {
         glfwWaitEventsTimeout(0.1);
-        return;
+        mouseKeys.clear();
+        mouseLatched.clear();
+        computerKeys.clear();
+        return {};
     }
 
     glfwPollEvents();
@@ -397,7 +403,6 @@ void UI::update(PianoKeyboard keyboard) {
     // The keys to draw as pressed: the MIDI keyboard's keys, the computer
     // keyboard's keys and the keys held with the mouse.
     updateComputerKeys();
-    std::unordered_set<int> pressedKeys = keyboard.getPressedKeys();
     pressedKeys.insert(mouseKeys.begin(), mouseKeys.end());
     pressedKeys.insert(computerKeys.begin(), computerKeys.end());
 
@@ -480,6 +485,17 @@ void UI::update(PianoKeyboard keyboard) {
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
     glfwSwapBuffers(window);
+
+    // Never feed externally supplied notes back into UI ownership.
+    if (shouldClose() || !glfwGetWindowAttrib(window, GLFW_FOCUSED)) {
+        mouseKeys.clear();
+        mouseLatched.clear();
+        computerKeys.clear();
+        return {};
+    }
+    auto uiKeys = mouseKeys;
+    uiKeys.insert(computerKeys.begin(), computerKeys.end());
+    return uiKeys;
 }
 
 void UI::shutdown() {

@@ -19,20 +19,22 @@ void PianoKeyboard::handleMIDI(double deltatime, std::vector<unsigned char> *mes
     auto* keyboard = static_cast<PianoKeyboard*>(userData);
     const int status = (*message)[0] & 0xF0;
     const int channel = (*message)[0] & 0x0F;
-    const int keys[] = {(*message)[1]};
-    const auto velocity = (*message)[2];
+    const int note = (*message)[1];
+    const int velocity = (*message)[2];
+    if (status != 0x90 && status != 0x80) return;
 
-    if (velocity != 0 && status == 0x90) {
-        keyboard->setPressedKeys(keys);
-        keyboard->sound.noteOn(channel, keys[0], velocity);
-    } else if ((velocity == 0 && status == 0x90) || status == 0x80) {
-        keyboard->releasePressedKeys(keys);
-        keyboard->sound.noteOff(channel, keys[0]);
+    // RtMidi invokes this on its own thread. Serialize state and audio calls.
+    try {
+        std::lock_guard lock(keyboard->stateMutex);
+        keyboard->playEvents(keyboard->notes.setMidi(
+            channel, note, status == 0x80 ? 0 : velocity));
+    } catch (const std::exception& error) {
+        // Exceptions must not escape the MIDI callback thread.
+        std::cerr << "MIDI audio error: " << error.what() << '\n';
     }
 }
 
 void PianoKeyboard::setup() {
-    pressedKeys.clear();
 
     try {
         midiDevice = new RtMidiIn();
@@ -47,7 +49,7 @@ void PianoKeyboard::setup() {
     std::cout << "\nThere are " << nPorts << " MIDI input sources available.\n";
     if (nPorts == 0) {
         std::cerr << "No MIDI ports available" << std::endl;
-        
+        return;
     }
     
     for ( unsigned int i=0; i<nPorts; i++ ) {
@@ -66,6 +68,9 @@ void PianoKeyboard::setup() {
         while (true) {
             std::cout << "Select MIDI Device [1-" << (nPorts) << "]: ";
             std::cin >> port;
+            if (std::cin.eof()) {
+                return;
+            }
 
             if (port >= 1 && port <= nPorts) {
                 port -= 1;
@@ -88,18 +93,22 @@ void PianoKeyboard::setup() {
     midiDevice->ignoreTypes(false, false, false);
 }
 
-void PianoKeyboard::setPressedKeys(std::span<const int> keys) {
-    for (int key : keys) {
-        pressedKeys.insert(key);
+void PianoKeyboard::playEvents(const std::vector<NoteState::Event>& events) {
+    for (const auto& event : events) {
+        if (event.velocity != 0) {
+            sound.noteOn(event.channel, event.note, event.velocity);
+        } else {
+            sound.noteOff(event.channel, event.note);
+        }
     }
 }
 
-void PianoKeyboard::releasePressedKeys(std::span<const int> keys) {
-    for (int i = 0; i < keys.size(); i++) {
-        pressedKeys.erase(keys[i]);
-    }
+void PianoKeyboard::setUiPressedKeys(const std::unordered_set<int>& keys) {
+    std::lock_guard lock(stateMutex);
+    playEvents(notes.setUi(keys));
 }
 
 std::unordered_set<int> PianoKeyboard::getPressedKeys() {
-    return pressedKeys;
+    std::lock_guard lock(stateMutex);
+    return notes.pressedKeys();
 }

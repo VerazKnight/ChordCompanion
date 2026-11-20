@@ -91,7 +91,11 @@ add_custom_command(
 
 target_sources(app_core PRIVATE "${SOUNDFONT_HEADER}")
 
-target_include_directories(app_core PRIVATE "${GENERATED_INCLUDE_DIR}")
+target_include_directories(app_core PRIVATE
+    "${GENERATED_INCLUDE_DIR}"
+    "${IMGUI_DIR}"
+    "${IMGUI_DIR}/backends"
+)
 
 target_include_directories(app_core PUBLIC src)
 
