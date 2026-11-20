@@ -1,3 +1,5 @@
+#pragma once
+
 #include "pianoKeyboard.hpp"
 #include "chordLogic.hpp"
 #include "pianoKeyboard.hpp"
@@ -28,4 +30,5 @@ private:
 
     ChordLogic chordLogic;
     PianoKeyboard keyboard;
+    UI ui;
 };
