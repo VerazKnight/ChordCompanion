@@ -23,7 +23,7 @@ struct ChordType {
 
 
 const ChordType CHORD_TYPES[] = {
-    {"", "Major triad", mask({0, 4, 7})},
+    {"", "Major triad", mask({0, 4, 7})}
 };
 
 const char* const NOTE_NAMES[12] = {
@@ -114,7 +114,7 @@ ChordAnalysis ChordLogic::analyze(std::span<const int> midiKeys) const {
     }
 
     // Root position first
-    std::sort(candidates.begin(), candidates.end(), [bass](const Candidate& a, const candidate&b) {
+    std::sort(candidates.begin(), candidates.end(), [bass](const Candidate& a, const Candidate&b) {
         const bool aInv = a.root != bass;
         const bool bInv = b.root != bass;
         if (aInv != bInv) return !aInv;
