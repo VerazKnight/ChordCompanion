@@ -39,7 +39,7 @@ public:
 
     ChordLogic(); // builds the chord table
 
-    std::string identifyChord(std::unordered_set<int>& pressedKeys) const;
+    std::string identifyChord(const std::unordered_set<int>& pressedKeys) const;
 
     ChordAnalysis analyze(std::span<const int> midiKeys) const;
     ChordAnalysis analyze(const std::unordered_set<int>& midiKeys) const;

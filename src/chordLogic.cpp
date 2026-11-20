@@ -19,7 +19,7 @@ struct ChordType {
     const char* suffix;
     const char* name;
     std::uint16_t mask;
-}
+};
 
 
 const ChordType CHORD_TYPES[] = {
@@ -98,7 +98,7 @@ ChordAnalysis ChordLogic::analyze(std::span<const int> midiKeys) const {
     for (int root = 0; root < 12; ++root) {
         if (!(pcMask & (1u << root))) continue;
 
-        const std::uint16_t rel = static_cast<std::uint16_t> (((pcMask >> root) | (pcMask << 12 - root))) & 0xFFF);
+        const std::uint16_t rel = static_cast<std::uint16_t>(((pcMask >> root) | (pcMask << (12 - root))) & 0xFFF);
         const auto found = chords.find(rel);
 
         if (found == chords.end()) continue;
@@ -114,7 +114,7 @@ ChordAnalysis ChordLogic::analyze(std::span<const int> midiKeys) const {
     }
 
     // Root position first
-    std::sort(candidates.begin(), candidates.end(), [bass](const Candidate& a, const candidate&b) {
+    std::sort(candidates.begin(), candidates.end(), [bass](const Candidate& a, const Candidate& b) {
         const bool aInv = a.root != bass;
         const bool bInv = b.root != bass;
         if (aInv != bInv) return !aInv;

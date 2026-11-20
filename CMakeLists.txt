@@ -128,10 +128,16 @@ target_link_libraries(ChordCompanion PRIVATE
     app_core
 )
 
-# TODO:
-# add_executable(unit_tests
+include(CTest)
 
-# )
+if(BUILD_TESTING)
+    if(MSVC)
+        set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    endif()
+
+    add_subdirectory(src/ext/googletest EXCLUDE_FROM_ALL)
+    add_subdirectory(tests)
+endif()
 
 if(MSVC)
     target_compile_options(ChordCompanion PRIVATE /W4)

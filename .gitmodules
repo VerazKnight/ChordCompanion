@@ -10,3 +10,6 @@
 [submodule "src/ext/vcpkg"]
 	path = src/ext/vcpkg
 	url = https://github.com/microsoft/vcpkg.git
+[submodule "src/ext/googletest"]
+	path = src/ext/googletest
+	url = https://github.com/google/googletest.git
