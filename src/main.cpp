@@ -132,7 +132,7 @@ void draw_piano(std::unordered_set<int> keys) {
             int note = blackKeyNotes[blackIndex];
             int idx = note - 60;
 
-            bool isPressed = mouseKeyPressed[idx] || midiKeyPressed[idx].load();
+            bool isPressed = mouseKeyPressed[idx] || midiKeyPressed[idx].load()|| (keys.find(note) != keys.end());
 
             ImU32 fillColor = isPressed
                 ? IM_COL32(80, 140, 220, 255)
@@ -159,6 +159,9 @@ int main() {
     std::unordered_set<int> keys{};
 
     keys.insert(60);
+    keys.insert(64);
+    keys.insert(67);
+    keys.insert(62);
 
     const char* glslVersion = nullptr;
     GLFWwindow* window = nullptr;
@@ -295,7 +298,6 @@ int main() {
     glfwTerminate();
 
     delete midiin;
-    
 
     return 0;
 }

@@ -72,29 +72,8 @@ static float textWidth(float size, const char* text) {
 
 // ------------------------------------------------ computer keyboard as piano
 
-struct ComputerKey {
-    ImGuiKey key;
-    int note;
-    const char* letter;
-};
-
-// Like a piano: A S D F ... are the white keys, W E T Y ... the black keys.
-static const ComputerKey COMPUTER_KEYS[] = {
-    { ImGuiKey_A, 60, "A" }, { ImGuiKey_W, 61, "W" }, { ImGuiKey_S, 62, "S" },
-    { ImGuiKey_E, 63, "E" }, { ImGuiKey_D, 64, "D" }, { ImGuiKey_F, 65, "F" },
-    { ImGuiKey_T, 66, "T" }, { ImGuiKey_G, 67, "G" }, { ImGuiKey_Y, 68, "Y" },
-    { ImGuiKey_H, 69, "H" }, { ImGuiKey_U, 70, "U" }, { ImGuiKey_J, 71, "J" },
-    { ImGuiKey_K, 72, "K" }, { ImGuiKey_O, 73, "O" }, { ImGuiKey_L, 74, "L" },
-    { ImGuiKey_P, 75, "P" }, { ImGuiKey_Semicolon, 76, ";" },
-};
-
 static const char* computerKeyLetter(int note) {
-    for (const ComputerKey& k : COMPUTER_KEYS) {
-        if (k.note == note) {
-            return k.letter;
-        }
-    }
-    return "";
+    return PianoInput::computerKeyLetter(note);
 }
 
 // "C4 E4 G4" for a list of notes.
@@ -299,14 +278,7 @@ void UI::setLearnerMode(bool learner) {
 // Switching mode clears everything the old mode was showing.
 void UI::changeMode(Mode newMode) {
     mode = newMode;
-    suggestionsVisible = false;
-    suggestRequested = false;
-    selectedSuggestion = -1;
-    feedback.clear();
-    noticeVisible = false;
-    highlightType = -1;
-    highlightRootPc = -1;
-    lastChangeTime = ImGui::GetCurrentContext() ? ImGui::GetTime() : 0.0;
+    session.resetTeaching(ImGui::GetCurrentContext() ? ImGui::GetTime() : 0.0);
 }
 
 bool UI::shouldClose() const {
@@ -314,7 +286,7 @@ bool UI::shouldClose() const {
 }
 
 std::unordered_set<int> UI::getMouseKeys() const {
-    return mouseKeys;
+    return input.mouseKeys;
 }
 
 // -------------------------------------------------------------- main frame
@@ -349,21 +321,27 @@ void UI::toggleFullscreen() {
 
 // The text shown in the big chord name: the app's label, or the UI's own.
 std::string UI::displayLabel() const {
-    if (chordLabel == "--" && currentChord.found) {
-        return CT::chordName(currentChord.rootPc, currentChord.typeIndex);
+    if (chordLabel == "--" && session.currentChord.found) {
+        return CT::chordName(session.currentChord.rootPc, session.currentChord.typeIndex);
     }
     return chordLabel;
 }
 
-void UI::update(PianoKeyboard keyboard) {
+std::unordered_set<int> UI::update(std::unordered_set<int> pressedKeys) {
     if (window == nullptr) {
-        return;
+        input.mouseKeys.clear();
+        input.mouseLatched.clear();
+        input.computerKeys.clear();
+        return {};
     }
 
     // Do not draw while the window is minimized.
     if (glfwGetWindowAttrib(window, GLFW_ICONIFIED)) {
         glfwWaitEventsTimeout(0.1);
-        return;
+        input.mouseKeys.clear();
+        input.mouseLatched.clear();
+        input.computerKeys.clear();
+        return {};
     }
 
     glfwPollEvents();
@@ -418,9 +396,9 @@ void UI::update(PianoKeyboard keyboard) {
     // The keys to draw as pressed: the MIDI keyboard's keys, the computer
     // keyboard's keys and the keys held with the mouse.
     updateComputerKeys();
-    std::unordered_set<int> pressedKeys = keyboard.getPressedKeys();
-    pressedKeys.insert(mouseKeys.begin(), mouseKeys.end());
-    pressedKeys.insert(computerKeys.begin(), computerKeys.end());
+    // pressedKeys comes from the backend (MIDI + keys the UI sent earlier).
+    // Draw everything together, but only return the keys the UI owns.
+    pressedKeys = input.allPressed(pressedKeys);
 
     drawModeBar();
 
@@ -503,6 +481,15 @@ void UI::update(PianoKeyboard keyboard) {
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
     glfwSwapBuffers(window);
+
+    // Never feed externally supplied notes back into UI ownership.
+    if (shouldClose() || !glfwGetWindowAttrib(window, GLFW_FOCUSED)) {
+        input.mouseKeys.clear();
+        input.mouseLatched.clear();
+        input.computerKeys.clear();
+        return {};
+    }
+    return input.allPressed({});   // only the mouse and computer keyboard keys
 }
 
 void UI::shutdown() {
@@ -521,233 +508,45 @@ void UI::shutdown() {
 
 // ---------------------------------------------------------------- analysis
 
+static ImGuiKey imguiKeyFor(char letter) {
+    if (letter == ';') {
+        return ImGuiKey_Semicolon;
+    }
+    return static_cast<ImGuiKey>(ImGuiKey_A + (letter - 'A'));
+}
+
 void UI::updateComputerKeys() {
     // Z and X switch between two octaves, so every piano key can be reached.
     if (ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
-        octaveShift = 0;
+        input.setHighOctave(false);
     }
     if (ImGui::IsKeyPressed(ImGuiKey_X, false)) {
-        octaveShift = 12;
+        input.setHighOctave(true);
     }
 
-    computerKeys.clear();
-    for (const ComputerKey& k : COMPUTER_KEYS) {
-        int note = k.note + octaveShift;
-        if (ImGui::IsKeyDown(k.key) && PianoLayout::isInRange(note)) {
-            computerKeys.insert(note);
+    std::vector<char> held;
+    for (const PianoInput::ComputerKeyDef& k : PianoInput::computerKeys()) {
+        if (ImGui::IsKeyDown(imguiKeyFor(k.letter[0]))) {
+            held.push_back(k.letter[0]);
         }
     }
+    input.updateComputer(held);
 }
 
-// Four friendly chords to start with when nothing has been played yet.
-static std::vector<CT::Suggestion> starterChords() {
-    return {
-        CT::suggestionFor(0, 0, "A friendly place to start"),
-        CT::suggestionFor(0, 4, "Bright and open"),
-        CT::suggestionFor(0, 5, "Soft and a little sad"),
-        CT::suggestionFor(0, 3, "Warm, used in many songs"),
-    };
-}
-
-void UI::buildSuggestions() {
-    suggestions.clear();
-    bridgeText.clear();
-    if (!history.empty() && keyPc >= 0) {
-        const CT::PlayedChord& last = history.back();
-
-        // Teach from where the player is. If the last chord is in the key,
-        // the ideas are in that key. If it is not, the ideas start fresh from
-        // that chord: a major chord is treated as "home", a minor chord as
-        // the sixth chord of its relative major.
-        ideasKeyPc = keyPc;
-        if (!CT::isDiatonic(keyPc, last.rootPc, last.typeIndex)) {
-            if (last.typeIndex == CT::MINOR) {
-                ideasKeyPc = CT::pitchClass(last.rootPc + 3);
-            } else if (last.typeIndex == CT::DIMINISHED) {
-                ideasKeyPc = CT::pitchClass(last.rootPc + 1);
-            } else {
-                ideasKeyPc = last.rootPc;
-            }
-            bridgeText = CT::bridgeMessage(keyPc, last.rootPc, last.typeIndex);
-        }
-        suggestions = CT::suggestNext(ideasKeyPc, last.rootPc, last.typeIndex);
-    } else {
-        ideasKeyPc = 0;
-        suggestions = starterChords();
-    }
-    suggestionsVisible = true;
-    selectedSuggestion = -1;
-    feedback.clear();
-}
-
-// A friendly reply when the player plays a chord while ideas were showing.
-// Playing something that is not on the list is always fine.
-std::string UI::makeFeedback(int oldKeyPc, const CT::IdentifiedChord& played) const {
-    std::string name = CT::chordName(played.rootPc, played.typeIndex);
-    for (size_t i = 0; i < suggestions.size(); i++) {
-        if (suggestions[i].rootPc == played.rootPc && suggestions[i].typeIndex == played.typeIndex) {
-            return "Nice! " + name + " was idea " + std::to_string(i + 1) + ". You are getting it!";
-        }
-    }
-    if (oldKeyPc >= 0 && CT::isDiatonic(oldKeyPc, played.rootPc, played.typeIndex)) {
-        return "Oh, " + name + "! Not on the list, but it fits the key. Love the detour.";
-    }
-    if (oldKeyPc >= 0) {
-        return "Ooh, " + name + " steps outside the key. Bold! That adds color, keep going.";
-    }
-    return name + " is a fine choice. Play on!";
-}
-
+// All the teaching logic lives in learningSession.hpp (no ImGui, so it can be
+// unit tested). This just hands it the keys and the time.
 void UI::updateAnalysis(const std::unordered_set<int>& pressedKeys) {
-    double now = ImGui::GetTime();
-
-    // Something changed: a key went down or up.
-    if (pressedKeys != lastPressed) {
-        lastPressed = pressedKeys;
-        lastChangeTime = now;
-        if (!pressedKeys.empty()) {
-            hasPlayed = true;
-        }
-
-        // A new full chord goes into the "You played" row. Single notes or
-        // unfinished chords are fine too, they just do not count as a chord.
-        CT::IdentifiedChord identified = CT::identifyChord(pressedKeys);
-        bool isNewChord = identified.found &&
-            (!currentChord.found ||
-             identified.rootPc != currentChord.rootPc ||
-             identified.typeIndex != currentChord.typeIndex);
-        if (isNewChord) {
-            int oldKeyPc = keyPc;
-            if (suggestionsVisible) {
-                feedback = makeFeedback(oldKeyPc, identified);
-            } else {
-                feedback.clear();
-            }
-
-            // Was this chord outside the key the player has been playing in?
-            // (Only after a few chords, so the key is not just a guess.)
-            bool outside = (mode == Mode::Learner) && oldKeyPc >= 0 && history.size() >= 3 &&
-                           !CT::isDiatonic(oldKeyPc, identified.rootPc, identified.typeIndex);
-
-            history.push_back(CT::PlayedChord{ identified.rootPc, identified.typeIndex });
-            if (history.size() > 8) {
-                history.erase(history.begin());
-            }
-
-            // The old ideas and highlights are done as soon as the player
-            // plays something. New ones can appear after the next pause.
-            suggestionsVisible = false;
-            suggestRequested = false;
-            selectedSuggestion = -1;
-
-            if (outside) {
-                noticeVisible = true;
-                noticeChord = CT::PlayedChord{ identified.rootPc, identified.typeIndex };
-                noticeKeyPc = oldKeyPc;
-                noticeTime = now;
-            } else if (noticeVisible && oldKeyPc >= 0 &&
-                       CT::isDiatonic(oldKeyPc, identified.rootPc, identified.typeIndex)) {
-                noticeVisible = false;  // back in the key, no need for the note
-            }
-        }
-        if (identified.found && mode == Mode::Learner) {
-            checkPractice(identified);
-        }
-        currentChord = identified;
-        keyPc = CT::detectKey(history);
-    }
-
-    if (!practiceMsg.empty() && now - practiceTime > 10.0) {
-        practiceMsg.clear();
-    }
-
-    pausedFor = now - lastChangeTime;
-
-    // The note about a chord outside the key fades by itself.
-    if (noticeVisible && now - noticeTime > 14.0) {
-        noticeVisible = false;
-    }
-
-    // Learner mode only. Ideas appear after a pause (if turned on) or when
-    // the player asks. They stay until a new chord is played.
-    if (mode == Mode::Learner && !suggestionsVisible) {
-        bool byPause = autoSuggest && hasPlayed && pausedFor >= idleSeconds;
-        if (byPause || suggestRequested) {
-            buildSuggestions();
-            suggestedByPause = byPause && !suggestRequested;
-        }
-    }
-}
-
-// The player chose a chord to practice (Show button). Answer like a friend:
-// cheer when it is right, give a small tip when it is close, and never stop
-// them from playing anything else.
-void UI::checkPractice(const CT::IdentifiedChord& played) {
-    if (highlightType < 0 || highlightRootPc < 0) {
-        return;
-    }
-    std::string target = CT::chordName(highlightRootPc, highlightType);
-    std::string playedName = CT::chordName(played.rootPc, played.typeIndex);
-    practiceTime = ImGui::GetTime();
-
-    if (played.rootPc == highlightRootPc && played.typeIndex == highlightType) {
-        if (played.inversion == highlightInversion) {
-            practiceMsg = "Yes! " + target + ", " + CT::inversionName(highlightInversion) +
-                          ". Nailed it! Pick another one to keep going.";
-            practiceMood = 1;
-            highlightType = -1;
-            highlightRootPc = -1;
-        } else {
-            std::vector<int> want = CT::chordNotes(highlightRootPc, highlightType, highlightInversion);
-            practiceMsg = "So close! That is " + target + ", but in " +
-                          CT::inversionName(played.inversion) + ". For " +
-                          CT::inversionName(highlightInversion) + " put " +
-                          CT::pitchClassName(CT::pitchClass(want.front())) + " at the bottom.";
-            practiceMood = 2;
-        }
-    } else {
-        // They moved on to something else. That is fine: let the glow go and
-        // let the box follow what they play again.
-        practiceMsg = "Oh, you went with " + playedName + " instead of " + target +
-                      ". No problem! Press Show again whenever you want to try it.";
-        practiceMood = 2;
-        highlightType = -1;
-        highlightRootPc = -1;
-        exampleRootPc = -1;
+    session.update(pressedKeys, ImGui::GetTime(), mode == Mode::Learner, autoSuggest, idleSeconds);
+    if (session.movedOn) {
+        exampleRootPc = -1;       // the inversion box follows the played chord again
+        session.movedOn = false;
     }
 }
 
 void UI::computeGlow(const std::unordered_set<int>& pressedKeys) {
-    glowNotes.clear();
-    glowCaption.clear();
-
-    // Player mode has no colors at all.
-    if (mode != Mode::Learner) {
-        return;
-    }
-
-    int shown = selectedSuggestion;
-    if (shown < 0 && suggestionsVisible && !suggestions.empty()) {
-        shown = 0;  // by default show the first idea
-    }
-
-    if (highlightType < 0 && suggestionsVisible && shown >= 0 && shown < static_cast<int>(suggestions.size())) {
-        const CT::Suggestion& s = suggestions[shown];
-        glowNotes = CT::chordNotes(s.rootPc, s.typeIndex, 0);
-        glowCaption = "Glowing = " + CT::chordName(s.rootPc, s.typeIndex) + " (an idea, not a rule)";
-    } else if (highlightType >= 0) {
-        int root = 0;
-        if (highlightRootPc >= 0) {
-            root = highlightRootPc;
-        } else if (!pressedKeys.empty()) {
-            root = CT::pitchClass(CT::lowestNote(pressedKeys));
-        } else if (!history.empty()) {
-            root = history.back().rootPc;
-        }
-        glowNotes = CT::chordNotes(root, highlightType, highlightInversion);
-        glowCaption = "Glowing = " + CT::chordName(root, highlightType) + ", " +
-                      CT::inversionName(highlightInversion) + " (your pick)";
-    }
+    Learning::Glow glow = Learning::glowFor(session, pressedKeys, mode == Mode::Learner);
+    glowNotes = glow.notes;
+    glowCaption = glow.caption;
 }
 
 // ------------------------------------------------------------------- mode
@@ -892,8 +691,7 @@ void UI::drawModeBar() {
     }
     ImGui::SameLine();
     if (ImGui::Button(releaseLabel)) {
-        mouseLatched.clear();
-        mouseKeys.clear();
+        input.releaseMouseKeys();
     }
 
     ImGui::EndChild();
@@ -907,7 +705,7 @@ void UI::drawChordStrip(const std::unordered_set<int>& pressedKeys, ImVec2 size)
     bool hasChord = (label != "--");
     ImU32 labelColor = COLOR_MUTED;
     if (hasChord) {
-        labelColor = (mode == Mode::Learner && currentChord.found) ? typeColor(currentChord.typeIndex)
+        labelColor = (mode == Mode::Learner && session.currentChord.found) ? typeColor(session.currentChord.typeIndex)
                                                                     : COLOR_ACCENT;
     }
 
@@ -920,8 +718,8 @@ void UI::drawChordStrip(const std::unordered_set<int>& pressedKeys, ImVec2 size)
 
     std::vector<int> lit = PianoLayout::keysToHighlight(pressedKeys);
     std::string notes = lit.empty() ? "Press keys to start" : PianoLayout::describeKeys(lit);
-    if (currentChord.found) {
-        notes += "   (" + CT::inversionName(currentChord.inversion) + ")";
+    if (session.currentChord.found) {
+        notes += "   (" + CT::inversionName(session.currentChord.inversion) + ")";
     }
     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (bigSize - ImGui::GetTextLineHeight()) * 0.5f);
     ImGui::PushStyleColor(ImGuiCol_Text, vec4(COLOR_MUTED));
@@ -934,7 +732,7 @@ void UI::drawChordStrip(const std::unordered_set<int>& pressedKeys, ImVec2 size)
 // A small box at the side. It never blocks the playing: the player can ignore
 // it, and it fades away by itself.
 void UI::drawNotice() {
-    if (!noticeVisible || mode != Mode::Learner) {
+    if (!session.noticeVisible || mode != Mode::Learner) {
         return;
     }
 
@@ -968,21 +766,17 @@ void UI::drawNotice() {
         ImGui::TextColored(vec4(COLOR_AMBER), "Outside the key");
         ImGui::PushStyleColor(ImGuiCol_Text, vec4(COLOR_MUTED));
         ImGui::TextWrapped("%s is not in %s major. That is fine, keep playing.",
-                           CT::chordName(noticeChord.rootPc, noticeChord.typeIndex).c_str(),
-                           CT::pitchClassName(noticeKeyPc).c_str());
+                           CT::chordName(session.noticeChord.rootPc, session.noticeChord.typeIndex).c_str(),
+                           CT::pitchClassName(session.noticeKeyPc).c_str());
         ImGui::PopStyleColor();
         ImGui::Spacing();
 
         if (ImGui::Button("Keep playing")) {
-            noticeVisible = false;
+            session.noticeVisible = false;
         }
         ImGui::SameLine();
         if (ImGui::Button("Start fresh here")) {
-            // Forget the old chords so the key is worked out from this chord on.
-            history.clear();
-            history.push_back(noticeChord);
-            keyPc = CT::detectKey(history);
-            noticeVisible = false;
+            session.startFreshHere();
         }
 
         ImGui::PopTextWrapPos();
@@ -1014,7 +808,7 @@ void UI::drawStatusBox(ImVec2 size) {
 
     ImGui::PushStyleColor(ImGuiCol_Text, vec4(COLOR_MUTED));
     ImGui::TextWrapped("No MIDI? Click the piano or press A W S E D F. Z / X = octave (%s).",
-                       octaveShift == 0 ? "low" : "high");
+                       input.octaveShift == 0 ? "low" : "high");
     ImGui::PopStyleColor();
 
     ImGui::EndChild();
@@ -1026,8 +820,8 @@ void UI::drawChordBox(const std::unordered_set<int>& pressedKeys, ImVec2 size) {
     // The label comes from the app (ChordLogic). If it has none yet, the UI
     // names the chord itself so this box still teaches something.
     std::string label = chordLabel;
-    if (label == "--" && currentChord.found) {
-        label = CT::chordName(currentChord.rootPc, currentChord.typeIndex);
+    if (label == "--" && session.currentChord.found) {
+        label = CT::chordName(session.currentChord.rootPc, session.currentChord.typeIndex);
     }
     bool hasChord = (label != "--");
 
@@ -1035,7 +829,7 @@ void UI::drawChordBox(const std::unordered_set<int>& pressedKeys, ImVec2 size) {
     // it takes the color of the chord type (blue major, orange minor, ...).
     ImU32 labelColor = COLOR_MUTED;
     if (hasChord) {
-        labelColor = (mode == Mode::Learner && currentChord.found) ? typeColor(currentChord.typeIndex)
+        labelColor = (mode == Mode::Learner && session.currentChord.found) ? typeColor(session.currentChord.typeIndex)
                                                                     : COLOR_ACCENT;
     }
     ImDrawList* drawList = ImGui::GetWindowDrawList();
@@ -1051,12 +845,12 @@ void UI::drawChordBox(const std::unordered_set<int>& pressedKeys, ImVec2 size) {
     } else {
         ImGui::AlignTextToFramePadding();
         subTitle(PianoLayout::describeKeys(lit).c_str());
-        if (currentChord.found) {
+        if (session.currentChord.found) {
             ImGui::SameLine();
             ImGui::TextUnformatted(" ");
             ImGui::SameLine();
             ImDrawList* list = ImGui::GetWindowDrawList();
-            std::string text = CT::inversionName(currentChord.inversion);
+            std::string text = CT::inversionName(session.currentChord.inversion);
             ImVec2 textSize = ImGui::CalcTextSize(text.c_str());
             ImVec2 chipPosition = ImGui::GetCursorScreenPos();
             ImVec2 chipSize(textSize.x + 20.0f, 24.0f);
@@ -1096,30 +890,30 @@ void UI::drawHistoryRow() {
 
     drawChip("YOU PLAYED", COLOR_MUTED, 0);
 
-    if (history.empty()) {
+    if (session.history.empty()) {
         drawChip("Play a chord to start", COLOR_MUTED, 0);
     }
     // A narrow window only has room for the last few chords.
-    size_t firstShown = (narrow && history.size() > 4) ? history.size() - 4 : 0;
-    for (size_t i = firstShown; i < history.size(); i++) {
-        const CT::PlayedChord& chord = history[i];
-        bool isLast = (i + 1 == history.size());
+    size_t firstShown = (narrow && session.history.size() > 4) ? session.history.size() - 4 : 0;
+    for (size_t i = firstShown; i < session.history.size(); i++) {
+        const CT::PlayedChord& chord = session.history[i];
+        bool isLast = (i + 1 == session.history.size());
         // Player mode keeps the chips plain: no colors.
         ImU32 chipColor = (mode == Mode::Learner) ? typeColor(chord.typeIndex)
                                                   : IM_COL32(150, 175, 210, 255);
         drawChip(CT::chordShortName(chord.rootPc, chord.typeIndex), chipColor, isLast ? 2 : 1);
     }
 
-    if (mode == Mode::Learner && suggestionsVisible && suggestedByPause) {
+    if (mode == Mode::Learner && session.suggestionsVisible && session.suggestedByPause) {
         char text[96];
         std::snprintf(text, sizeof(text), "paused %d seconds, ideas are below",
                       static_cast<int>(idleSeconds));
         drawChip(text, COLOR_AMBER, 1);
     }
 
-    if (keyPc >= 0) {
-        std::string text = (history.size() >= 3 ? "Key: " : "Key guess: ") +
-                           CT::pitchClassName(keyPc) + " major";
+    if (session.keyPc >= 0) {
+        std::string text = (session.history.size() >= 3 ? "Key: " : "Key guess: ") +
+                           CT::pitchClassName(session.keyPc) + " major";
         drawChip(text, COLOR_GREEN, 1);
     }
 
@@ -1187,23 +981,13 @@ void UI::drawPianoBox(const std::unordered_set<int>& pressedKeys, ImVec2 size) {
     // click latches a key (and Shift + click again lets go), so a whole chord
     // can be played with the mouse. The key under the mouse is found with
     // noteAtPoint() from pianoLayout.hpp.
-    mouseKeys = mouseLatched;
+    int noteUnderMouse = -1;
     if (ImGui::IsWindowHovered()) {
         ImVec2 mouse = ImGui::GetMousePos();
-        int note = noteAtPoint((mouse.x - origin.x) / scale, (mouse.y - origin.y) / scaleY);
-        if (note != -1) {
-            if (ImGui::GetIO().KeyShift) {
-                if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-                    if (mouseLatched.erase(note) == 0) {
-                        mouseLatched.insert(note);
-                    }
-                    mouseKeys = mouseLatched;
-                }
-            } else if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-                mouseKeys.insert(note);
-            }
-        }
+        noteUnderMouse = noteAtPoint((mouse.x - origin.x) / scale, (mouse.y - origin.y) / scaleY);
     }
+    input.updateMouse(noteUnderMouse, ImGui::IsMouseDown(ImGuiMouseButton_Left),
+                      ImGui::IsMouseClicked(ImGuiMouseButton_Left), ImGui::GetIO().KeyShift);
 
     // A key is lit if the MIDI keyboard, the mouse or the computer keyboard
     // is holding it.
@@ -1218,7 +1002,7 @@ void UI::drawPianoBox(const std::unordered_set<int>& pressedKeys, ImVec2 size) {
     // Colored dots: which keys could finish a chord. They are shown while a
     // chord is still being built (not once it is complete).
     std::map<int, std::vector<ImU32>> dots;
-    if (mode == Mode::Learner && showDots && !pressedKeys.empty() && !currentChord.found) {
+    if (mode == Mode::Learner && showDots && !pressedKeys.empty() && !session.currentChord.found) {
         int lowest = CT::lowestNote(pressedKeys);
         int lowestPc = CT::pitchClass(lowest);
         for (const CT::Candidate& c : CT::possibleChords(pressedKeys)) {
@@ -1273,7 +1057,7 @@ void UI::drawPianoBox(const std::unordered_set<int>& pressedKeys, ImVec2 size) {
         // Labels: the note name on the C keys (where each octave starts) and
         // the computer key that plays this note.
         float labelY = bottomRight.y - 12.0f * scale - labelSize;
-        const char* letter = computerKeyLetter(note - octaveShift);
+        const char* letter = computerKeyLetter(note - input.octaveShift);
         if (letter[0] != '\0') {
             float w = textWidth(labelSize, letter);
             drawList->AddText(font, labelSize, ImVec2(x + (whiteWidth - w) * 0.5f, labelY),
@@ -1317,7 +1101,7 @@ void UI::drawPianoBox(const std::unordered_set<int>& pressedKeys, ImVec2 size) {
         }
 
         float blackLabelY = bottomRight.y - 10.0f * scale - labelSize * 0.5f - 2.0f;
-        const char* letter = computerKeyLetter(note - octaveShift);
+        const char* letter = computerKeyLetter(note - input.octaveShift);
         if (letter[0] != '\0') {
             float w = textWidth(labelSize, letter);
             drawList->AddText(font, labelSize, ImVec2(x + (width - w) * 0.5f, blackLabelY),
@@ -1424,17 +1208,17 @@ void UI::drawChordHelperBox(const std::unordered_set<int>& pressedKeys, ImVec2 s
 
     // Dropdowns: choose a chord type and an inversion to see it on the piano.
     const char* typeItems[] = { "None", "Major", "Minor", "Diminished", "Augmented" };
-    int typeChoice = highlightType + 1;
+    int typeChoice = session.highlightType + 1;
     ImGui::SetNextItemWidth(160.0f);
     if (ImGui::Combo("Highlight chord", &typeChoice, typeItems, 5)) {
-        highlightType = typeChoice - 1;
-        highlightRootPc = -1;
-        practiceMsg.clear();
+        session.highlightType = typeChoice - 1;
+        session.highlightRootPc = -1;
+        session.practiceMsg.clear();
     }
 
     const char* inversionItems[] = { "Root position", "1st inversion", "2nd inversion" };
     ImGui::SetNextItemWidth(160.0f);
-    ImGui::Combo("Inversion", &highlightInversion, inversionItems, 3);
+    ImGui::Combo("Inversion", &session.highlightInversion, inversionItems, 3);
 
     ImGui::Spacing();
     subTitle("POSSIBLE CHORDS FROM THE PRESSED NOTE");
@@ -1443,9 +1227,9 @@ void UI::drawChordHelperBox(const std::unordered_set<int>& pressedKeys, ImVec2 s
 
     if (pressedKeys.empty()) {
         subTitle("Press a key to see what it could become.");
-    } else if (currentChord.found) {
+    } else if (session.currentChord.found) {
         ImGui::TextWrapped("Chord complete: %s",
-                           CT::chordName(currentChord.rootPc, currentChord.typeIndex).c_str());
+                           CT::chordName(session.currentChord.rootPc, session.currentChord.typeIndex).c_str());
     } else {
         int rootPc = CT::pitchClass(CT::lowestNote(pressedKeys));
         std::set<int> pressedPcs;
@@ -1494,34 +1278,34 @@ void UI::drawSuggestionBox(ImVec2 size) {
     ImVec4 amber = vec4(COLOR_AMBER);
 
     // A friendly reply to the chord that was just played.
-    if (!feedback.empty()) {
+    if (!session.feedback.empty()) {
         ImGui::PushStyleColor(ImGuiCol_Text, vec4(COLOR_GREEN));
-        ImGui::TextWrapped("%s", feedback.c_str());
+        ImGui::TextWrapped("%s", session.feedback.c_str());
         ImGui::PopStyleColor();
     }
 
-    if (!suggestionsVisible) {
+    if (!session.suggestionsVisible) {
         subTitleWrapped(autoSuggest ? "Play whatever you like, nothing here is a rule. Ideas appear if you pause."
                                     : "Play whatever you like, nothing here is a rule.");
         if (ImGui::Button("Show ideas now")) {
-            suggestRequested = true;
+            session.suggestRequested = true;
         }
     } else {
-        if (history.empty()) {
+        if (session.history.empty()) {
             ImGui::PushStyleColor(ImGuiCol_Text, amber);
-            ImGui::TextWrapped("%s", hasPlayed ? "Those notes are not a full chord yet. Any three different notes work, or try:"
+            ImGui::TextWrapped("%s", session.hasPlayed ? "Those notes are not a full chord yet. Any three different notes work, or try:"
                                                : "Not sure how to start? Any chord is fine. Some friendly ones:");
             ImGui::PopStyleColor();
         } else {
             ImGui::PushStyleColor(ImGuiCol_Text, amber);
             ImGui::TextWrapped("Some ideas in %s major (you can play anything):",
-                               CT::pitchClassName(ideasKeyPc).c_str());
+                               CT::pitchClassName(session.ideasKeyPc).c_str());
             ImGui::PopStyleColor();
         }
         ImDrawList* drawList = ImGui::GetWindowDrawList();
 
-        for (size_t i = 0; i < suggestions.size(); i++) {
-            const CT::Suggestion& s = suggestions[i];
+        for (size_t i = 0; i < session.suggestions.size(); i++) {
+            const CT::Suggestion& s = session.suggestions[i];
             ImVec2 p = ImGui::GetCursorScreenPos();
             drawList->AddCircleFilled(ImVec2(p.x + 8.0f, p.y + ImGui::GetTextLineHeight() * 0.5f + 2.0f),
                                       6.0f, typeColor(s.typeIndex));
@@ -1530,25 +1314,25 @@ void UI::drawSuggestionBox(ImVec2 size) {
 
             std::string label = std::to_string(i + 1) + ".  " + CT::chordName(s.rootPc, s.typeIndex) +
                                 ": " + s.reason;
-            bool selected = (static_cast<int>(i) == selectedSuggestion) ||
-                            (selectedSuggestion < 0 && i == 0);
+            bool selected = (static_cast<int>(i) == session.selectedSuggestion) ||
+                            (session.selectedSuggestion < 0 && i == 0);
             if (ImGui::Selectable(label.c_str(), selected)) {
-                selectedSuggestion = static_cast<int>(i);
+                session.selectedSuggestion = static_cast<int>(i);
             }
         }
 
-        if (!bridgeText.empty()) {
+        if (!session.bridgeText.empty()) {
             ImGui::TextColored(amber, "Bridge:");
             ImGui::SameLine();
-            ImGui::TextWrapped("%s", bridgeText.c_str());
+            ImGui::TextWrapped("%s", session.bridgeText.c_str());
         }
         subTitle("Click an idea to see it on the piano.");
         ImGui::SameLine();
         if (ImGui::SmallButton("Hide ideas")) {
-            suggestionsVisible = false;
-            suggestRequested = false;
-            selectedSuggestion = -1;
-            lastChangeTime = ImGui::GetTime();  // wait a full pause before showing ideas again
+            session.suggestionsVisible = false;
+            session.suggestRequested = false;
+            session.selectedSuggestion = -1;
+            session.lastChangeTime = ImGui::GetTime();  // wait a full pause before showing ideas again
         }
     }
 
@@ -1558,12 +1342,12 @@ void UI::drawSuggestionBox(ImVec2 size) {
 void UI::drawInversionBox(ImVec2 size) {
     beginCard("InversionBox", size, "WHAT IS AN INVERSION?");
 
-    if (!practiceMsg.empty()) {
+    if (!session.practiceMsg.empty()) {
         // A friendly reply replaces the intro text while it is showing.
-        ImVec4 col = practiceMood == 1 ? vec4(COLOR_GREEN)
-                   : practiceMood == 2 ? vec4(COLOR_AMBER) : vec4(COLOR_ACCENT);
+        ImVec4 col = session.practiceMood == 1 ? vec4(COLOR_GREEN)
+                   : session.practiceMood == 2 ? vec4(COLOR_AMBER) : vec4(COLOR_ACCENT);
         ImGui::PushStyleColor(ImGuiCol_Text, col);
-        ImGui::TextWrapped("%s", practiceMsg.c_str());
+        ImGui::TextWrapped("%s", session.practiceMsg.c_str());
         ImGui::PopStyleColor();
     } else {
         ImGui::TextWrapped("The same chord can have a different note at the bottom. "
@@ -1592,18 +1376,16 @@ void UI::drawInversionBox(ImVec2 size) {
     CT::PlayedChord base{ 0, CT::MAJOR };
     if (exampleRootPc >= 0) {
         base = CT::PlayedChord{ exampleRootPc, exampleType };
-    } else if (currentChord.found) {
-        base = CT::PlayedChord{ currentChord.rootPc, currentChord.typeIndex };
-    } else if (!history.empty()) {
-        base = history.back();
+    } else if (session.currentChord.found) {
+        base = CT::PlayedChord{ session.currentChord.rootPc, session.currentChord.typeIndex };
+    } else if (!session.history.empty()) {
+        base = session.history.back();
     }
     ImGui::TextColored(vec4(COLOR_ACCENT), "%s", CT::chordName(base.rootPc, base.typeIndex).c_str());
-    if (highlightType >= 0) {
+    if (session.highlightType >= 0) {
         ImGui::SameLine();
         if (ImGui::SmallButton("Clear glow")) {
-            highlightType = -1;
-            highlightRootPc = -1;
-            practiceMsg.clear();
+            session.clearPractice();
         }
     }
 
@@ -1611,9 +1393,9 @@ void UI::drawInversionBox(ImVec2 size) {
         ImGui::PushID(inversion);
 
         std::vector<int> notes = CT::chordNotes(base.rootPc, base.typeIndex, inversion);
-        bool isPlaying = currentChord.found && currentChord.inversion == inversion &&
-                         currentChord.rootPc == base.rootPc &&
-                         currentChord.typeIndex == base.typeIndex;
+        bool isPlaying = session.currentChord.found && session.currentChord.inversion == inversion &&
+                         session.currentChord.rootPc == base.rootPc &&
+                         session.currentChord.typeIndex == base.typeIndex;
 
         std::string name = CT::inversionName(inversion);
         name[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(name[0])));
@@ -1625,16 +1407,10 @@ void UI::drawInversionBox(ImVec2 size) {
         }
         ImGui::SameLine();
         if (ImGui::SmallButton("Show")) {
-            highlightType = base.typeIndex;
-            highlightRootPc = base.rootPc;
-            highlightInversion = inversion;
+            session.startPractice(base.rootPc, base.typeIndex, inversion, ImGui::GetTime());
             // Keep this chord in the box, even after other chords are played.
             exampleRootPc = base.rootPc;
             exampleType = base.typeIndex;
-            practiceMsg = "Go ahead and play " + CT::chordName(base.rootPc, base.typeIndex) + ", " +
-                          CT::inversionName(inversion) + ". Take your time!";
-            practiceMood = 0;
-            practiceTime = ImGui::GetTime();
         }
 
         ImGui::PopID();
