@@ -1,0 +1,303 @@
+\documentclass[10pt,letterpaper]{article}
+\usepackage[margin=0.7in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{array,longtable,booktabs,pdflscape}
+\usepackage{listings}
+\usepackage[hidelinks]{hyperref}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{5pt}
+\setlength{\emergencystretch}{2em}
+\lstset{basicstyle=\ttfamily\scriptsize,breaklines=true,columns=fullflexible,
+  keepspaces=true,showstringspaces=false,frame=single}
+\newcolumntype{P}[1]{>{\raggedright\arraybackslash}p{#1}}
+\title{ChordCompanion\\Assignment 4: Unit and Component Testing}
+\author{Markus Miller \and Louis Mikula \and Khem B K}
+\date{Software Engineering, CSCI 5801\\Professor Biswas}
+\begin{document}
+\maketitle
+
+\section{Overview}
+ChordCompanion is a piano and chord-learning application. The supplied run
+reports \textbf{42 passed, 0 failed}: 33 unit tests and 9 component tests.
+GoogleTest and CTest exercise input state, piano layout and chord analysis
+without a window, audio output or MIDI device.
+
+\subsection{Four selected units}
+\begin{enumerate}
+\item \textbf{NoteState class} (4 tests, IDs 1--4): updates held notes and produces
+note-on/off events. This tests the input-model responsibility of PianoKeyboard.
+Shared UI/MIDI notes remain held until their last owner releases them.
+\item \textbf{PianoLayout::noteAtPoint} (4 tests, IDs 22--25): converts a piano-local
+mouse position into a MIDI note or -1. This supports UI's click-on-piano use case.
+\item \textbf{ChordTheory::identifyChord} (4 tests, IDs 26--29): determines a chord's
+root, type and inversion from held notes for the current UI.
+\item \textbf{ChordTheory::detectKey} (4 tests, IDs 30--33): estimates a major key
+from recognized chord history, including a relative-major result for minor
+progressions. This supports the UI's added history analysis.
+\end{enumerate}
+These four units have 16 tests, exceeding the required 12. Additional unit tests
+cover ChordLogic (8, IDs 5--12) and PianoLayout helpers (9, IDs 13--21).
+
+\subsection{Two selected components}
+\begin{enumerate}
+\item \textbf{Note-input interpretation} (5 tests, IDs 34--38): combines PianoLayout,
+NoteState and ChordTheory to interpret resolved UI/MIDI notes, identify chords,
+and describe visible keys. Cases include successful chord formation, outside hits,
+incomplete chords and shared-source release.
+\item \textbf{Chord-progression analysis} (4 tests, IDs 39--42): sends real
+identifyChord results into a PlayedChord history and detectKey. This combines
+chord recognition and history analysis. Cases include a normal progression,
+unrecognized snapshots, an outside-key chord and inverted voicings.
+\end{enumerate}
+Both components use real computational functions and fixed test data.
+
+\section{Test results}
+Each ID below is the progress numerator in the supplied output (for example,
+1/42 identifies ID 1); CTest's own test numbers start at 2. The transcript in
+Section~\ref{sec:output} gives the complete GoogleTest names. IDs 1--33 are unit
+tests and IDs 34--42 are component tests. MIDI notes are integers; key 0 means
+C major; key -1 means unknown. Event triples mean (channel, note, velocity),
+with velocity 0 meaning note-off.
+
+Actual results summarize the assertions that passed in the supplied run.
+\begin{landscape}
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.18}
+\begin{longtable}{P{0.6cm}P{3.0cm}P{4.0cm}P{6.8cm}P{6.8cm}P{0.8cm}}
+\toprule
+ID & Purpose & Input & Expected result & Actual result & Status \\
+\midrule
+\endfirsthead
+\toprule
+ID & Purpose & Input & Expected result & Actual result & Status \\
+\midrule
+\endhead
+\midrule \multicolumn{6}{r}{Continued on next page} \\
+\endfoot
+\bottomrule
+\endlastfoot
+1 & MIDI press/release & Channel 0, note 60, velocity 90 then 0 & Keys \{60\}, then empty; events (0,60,90), then (0,60,0). & Keys \{60\}, then empty; events (0,60,90), then (0,60,0). & Pass \\
+2 & UI changes only & UI \{60,64\}; repeat; then \{64\} & Two note-ons at velocity 100; no repeated events; only note 60 released. & Two note-ons at velocity 100; no repeated events; only note 60 released. & Pass \\
+3 & Shared ownership & MIDI holds 60; UI also holds 60; release MIDI, then UI & No duplicate on or premature off; final UI release emits one off; keys empty. & No duplicate on or premature off; final UI release emits one off; keys empty. & Pass \\
+4 & Independent channels & Note 60 on channels 0 and 1, velocities 90 and 80; release each & Separate channel events; pitch 60 remains until both release. & Separate channel events; pitch 60 remains until both release. & Pass \\
+5 & Empty chord analysis & No pressed keys & Empty status and empty identification string. & Empty status and empty identification string. & Pass \\
+6 & Single pitch across octaves & \{60\}; \{48,60\} & SingleNote status for both; \{60\} label C. & SingleNote status for both; \{60\} label C. & Pass \\
+7 & Major recognition and voicing & \{60,64,67\}; \{62,66,69\}; \{48,64,79\}; \{48,60,64,67\} & Labels C,D,C,C; C triad has one Major triad match, Recognized, no inversion. & Labels C,D,C,C; C triad has one Major triad match, Recognized, no inversion. & Pass \\
+8 & Inversion naming & \{64,67,72\}; \{67,72,76\} & C/E and C/G; first has one inverted match, root 0, bass 4. & C/E and C/G; first has one inverted match, root 0, bass 4. & Pass \\
+9 & Unsupported chord fallback & C minor: \{60,63,67\} & Unnamed, no matches; label C (unnamed: +3 +7). & Unnamed, no matches; label C (unnamed: +3 +7). & Pass \\
+10 & Too many distinct notes & \{60,62,64,67,69\} & TooManyNotes; distinctNotes = 5. & TooManyNotes; distinctNotes = 5. & Pass \\
+11 & Pitch and octave names & Pitch values 0,61; MIDI notes 60,21 & C, Db; C4, A0. & C, Db; C4, A0. & Pass \\
+12 & Chord pitch-class lookup & Major roots 0 and 7; unknown suffix nonsense & \{0,4,7\}; \{7,11,2\}; empty for unknown suffix. & \{0,4,7\}; \{7,11,2\}; empty for unknown suffix. & Pass \\
+13 & Black/white classification & Black pitch classes 1,3,6,8,10, also +60; white classes 0,2,4,5,7,9,11 & Black cases true; white cases false. & Black cases true; white cases false. & Pass \\
+14 & Negative pitch wrapping & -1 and -2 & White (false), black (true). & White (false), black (true). & Pass \\
+15 & Visible range boundaries & 59,60,83,84 & Outside, inside, inside, outside. & Outside, inside, inside, outside. & Pass \\
+16 & White-key positioning & C4 through B5 white notes & Indices 0--13; x positions 0,40,...,520. & Indices 0--13; x positions 0,40,...,520. & Pass \\
+17 & Black-key positioning & Notes 61 and 82 & x = 27 and 507; whiteKeyIndex(61) = -1. & x = 27 and 507; whiteKeyIndex(61) = -1. & Pass \\
+18 & Invalid layout notes & -1,59,84,128 & White index and x position both -1. & White index and x position both -1. & Pass \\
+19 & Sorted visible highlights & \{83,59,67,60,84\}; empty; \{0,127\} & \{60,67,83\}; empty; empty. & \{60,67,83\}; empty; empty. & Pass \\
+20 & Note names and invalid MIDI & 60,61,0,127,-1,128 & C4,C\#4,C-1,G9; empty strings for -1 and 128. & C4,C\#4,C-1,G9; empty strings for -1 and 128. & Pass \\
+21 & Pressed-note description & \{60,64,67\}; empty & C4 E4 G4; None. & C4 E4 G4; None. & Pass \\
+22 & White-key hit & Point (20,150) & MIDI 60. & MIDI 60. & Pass \\
+23 & Black-key priority & Point (35,50) & MIDI 61 rather than underlying white key. & MIDI 61 rather than underlying white key. & Pass \\
+24 & Black-key lower boundary & Points (35,99), (35,100) & MIDI 61, then MIDI 60. & MIDI 61, then MIDI 60. & Pass \\
+25 & Outside piano & Points (-1,10), (560,10), (20,160) & -1 for every point. & -1 for every point. & Pass \\
+26 & UI chord recognition & \{60,64,67\} & Found; root 0; MAJOR; inversion 0. & Found; root 0; MAJOR; inversion 0. & Pass \\
+27 & UI inversion recognition & \{64,67,72\} & Found; root 0; MAJOR; inversion 1. & Found; root 0; MAJOR; inversion 1. & Pass \\
+28 & Incomplete chord & \{60,64\}; empty & Not found for either input. & Not found for either input. & Pass \\
+29 & Unrecognized cluster & \{60,61,62\} & Not found. & Not found. & Pass \\
+30 & Key from progression & F major, G major, A minor, G major history & Key 0 (C major). & Key 0 (C major). & Pass \\
+31 & Empty history & No played chords & Key -1 (unknown). & Key -1 (unknown). & Pass \\
+32 & Relative major estimate & Am,Dm,Em,Am history & Key 0 (C major). & Key 0 (C major). & Pass \\
+33 & Outside chord in history & F,G,Am,G,D major history & Key remains 0 (C major). & Key remains 0 (C major). & Pass \\
+34 & UI notes to chord/display & NoteState UI \{60,64,67\} & Same keys; found C major; description C4 E4 G4. & Same keys; found C major; description C4 E4 G4. & Pass \\
+35 & Hit test to held note & Point (20,140); set UI to hit; then clear UI & Hit 60; held \{60\}; then empty. & Hit 60; held \{60\}; then empty. & Pass \\
+36 & MIDI/UI chord combination & MIDI 60 velocity 90; UI \{64,67\} & Held \{60,64,67\}; found C major, root position. & Held \{60,64,67\}; found C major, root position. & Pass \\
+37 & Outside hit with incomplete MIDI chord & MIDI 60,64; point (900,900); empty UI snapshot & Hit -1; held \{60,64\}; no recognized chord. & Hit -1; held \{60,64\}; no recognized chord. & Pass \\
+38 & Shared chord release & MIDI and UI hold C major; clear UI; then release MIDI & UI release emits no offs; C chord remains; final keys empty and no chord. & UI release emits no offs; C chord remains; final keys empty and no chord. & Pass \\
+39 & Notes to progression/key & F \{65,69,72\}, G \{67,71,74\}, Am \{69,72,76\}, G & 4 history entries, roots 5,7,9,7; major,major,minor,major; key 0. & 4 history entries, roots 5,7,9,7; major,major,minor,major; key 0. & Pass \\
+40 & Rejected snapshots to unknown key & Empty; \{60\}; \{60,64\}; \{60,61,62\} & No history entries; key -1. & No history entries; key -1. & Pass \\
+41 & Outside chord after established key & F,G,Am,G note sets; then D \{62,66,69\} & Initial key 0; D recognized, not diatonic; 5 history entries; key stays 0. & Initial key 0; D recognized, not diatonic; 5 history entries; key stays 0. & Pass \\
+42 & Inversions to root history & \{64,67,72\}; \{69,72,77\}; \{71,74,79\} & 3 major entries with roots 0,5,7, not basses 4,9,11; key 0. & 3 major entries with roots 0,5,7, not basses 4,9,11; key 0. & Pass \\
+\end{longtable}
+\end{landscape}
+\normalsize
+
+\section{Execution evidence}\label{sec:output}
+Complete suite command, executed from the repository root:
+\begin{lstlisting}
+cmake --build build --target check --parallel 2
+\end{lstlisting}
+The supplied console output is reproduced below in place of a screenshot.
+CTest labels all 42 tests ``unit'', including the 9 component tests.
+
+\begin{lstlisting}[basicstyle=\ttfamily\tiny]
+[100%] Linking CXX executable unit_tests
+[100%] Built target unit_tests
+Test project /home/verazknight/Code/ChordCompanion/build
+      Start  2: NoteState.MidiPressAndReleaseUpdateKeysAndEmitEvents
+ 1/42 Test # 2: NoteState.MidiPressAndReleaseUpdateKeysAndEmitEvents .....................   Passed    0.00 sec
+      Start  3: NoteState.UiInputEmitsEventsOnlyForChangedNotes
+ 2/42 Test # 3: NoteState.UiInputEmitsEventsOnlyForChangedNotes ..........................   Passed    0.00 sec
+      Start  4: NoteState.SharedNoteStaysHeldUntilBothSourcesRelease
+ 3/42 Test # 4: NoteState.SharedNoteStaysHeldUntilBothSourcesRelease .....................   Passed    0.00 sec
+      Start  5: NoteState.MidiChannelsMaintainIndependentOwnership
+ 4/42 Test # 5: NoteState.MidiChannelsMaintainIndependentOwnership .......................   Passed    0.00 sec
+      Start  6: ChordLogic.NoKeysHeldIsEmpty
+ 5/42 Test # 6: ChordLogic.NoKeysHeldIsEmpty .............................................   Passed    0.00 sec
+      Start  7: ChordLogic.SingleNoteIgnoresOctave
+ 6/42 Test # 7: ChordLogic.SingleNoteIgnoresOctave .......................................   Passed    0.00 sec
+      Start  8: ChordLogic.MajorTriadIsRecognizedOnAnyRootAndOctave
+ 7/42 Test # 8: ChordLogic.MajorTriadIsRecognizedOnAnyRootAndOctave ......................   Passed    0.00 sec
+      Start  9: ChordLogic.InversionsNameTheLowestNoteAsBass
+ 8/42 Test # 9: ChordLogic.InversionsNameTheLowestNoteAsBass .............................   Passed    0.00 sec
+      Start 10: ChordLogic.UnknownCombinationIsUnnamedNotWrong
+ 9/42 Test #10: ChordLogic.UnknownCombinationIsUnnamedNotWrong ...........................   Passed    0.00 sec
+      Start 11: ChordLogic.MoreThanFourDistinctNotesIsTooMany
+10/42 Test #11: ChordLogic.MoreThanFourDistinctNotesIsTooMany ............................   Passed    0.00 sec
+      Start 12: ChordLogic.NoteNamesIncludeOctaveWhereRequested
+11/42 Test #12: ChordLogic.NoteNamesIncludeOctaveWhereRequested ..........................   Passed    0.00 sec
+      Start 13: ChordLogic.ChordPitchClassesListNotesFromTheRoot
+12/42 Test #13: ChordLogic.ChordPitchClassesListNotesFromTheRoot .........................   Passed    0.00 sec
+      Start 14: PianoLayout.BlackKeysAreTheFiveSharpsOfEachOctave
+13/42 Test #14: PianoLayout.BlackKeysAreTheFiveSharpsOfEachOctave ........................   Passed    0.00 sec
+      Start 15: PianoLayout.BlackKeyClassificationWrapsNegativePitchClasses
+14/42 Test #15: PianoLayout.BlackKeyClassificationWrapsNegativePitchClasses ..............   Passed    0.00 sec
+      Start 16: PianoLayout.VisibleRangeIncludesC4ThroughB5Only
+15/42 Test #16: PianoLayout.VisibleRangeIncludesC4ThroughB5Only ..........................   Passed    0.00 sec
+      Start 17: PianoLayout.WhiteKeysOccupyConsecutiveColumns
+16/42 Test #17: PianoLayout.WhiteKeysOccupyConsecutiveColumns ............................   Passed    0.00 sec
+      Start 18: PianoLayout.BlackKeysStraddleTheirWhiteKeyBoundaries
+17/42 Test #18: PianoLayout.BlackKeysStraddleTheirWhiteKeyBoundaries .....................   Passed    0.00 sec
+      Start 19: PianoLayout.InvalidLayoutNotesHaveNoPosition
+18/42 Test #19: PianoLayout.InvalidLayoutNotesHaveNoPosition .............................   Passed    0.00 sec
+      Start 20: PianoLayout.HighlightsAreSortedAndLimitedToVisibleNotes
+19/42 Test #20: PianoLayout.HighlightsAreSortedAndLimitedToVisibleNotes ..................   Passed    0.00 sec
+      Start 21: PianoLayout.NoteNamesIncludeOctavesAndRejectInvalidMidiNotes
+20/42 Test #21: PianoLayout.NoteNamesIncludeOctavesAndRejectInvalidMidiNotes .............   Passed    0.00 sec
+      Start 22: PianoLayout.PressedNoteDescriptionHandlesChordsAndEmptyInput
+21/42 Test #22: PianoLayout.PressedNoteDescriptionHandlesChordsAndEmptyInput .............   Passed    0.00 sec
+      Start 23: NoteAtPoint.ClickOnWhiteKeyFindsThatKey
+22/42 Test #23: NoteAtPoint.ClickOnWhiteKeyFindsThatKey ..................................   Passed    0.00 sec
+      Start 24: NoteAtPoint.ClickOnBlackKeyFindsBlackKeyNotWhiteKeyUnderIt
+23/42 Test #24: NoteAtPoint.ClickOnBlackKeyFindsBlackKeyNotWhiteKeyUnderIt ...............   Passed    0.00 sec
+      Start 25: NoteAtPoint.FirstRowBelowBlackKeysFindsWhiteKeyAgain
+24/42 Test #25: NoteAtPoint.FirstRowBelowBlackKeysFindsWhiteKeyAgain .....................   Passed    0.00 sec
+      Start 26: NoteAtPoint.ClicksOutsidePianoFindNoKey
+25/42 Test #26: NoteAtPoint.ClicksOutsidePianoFindNoKey ..................................   Passed    0.00 sec
+      Start 27: IdentifyChord.TriadInRootPositionIsRecognized
+26/42 Test #27: IdentifyChord.TriadInRootPositionIsRecognized ............................   Passed    0.00 sec
+      Start 28: IdentifyChord.InversionIsRecognizedFromTheBottomNote
+27/42 Test #28: IdentifyChord.InversionIsRecognizedFromTheBottomNote .....................   Passed    0.00 sec
+      Start 29: IdentifyChord.TwoNotesAreNotAFullChordYet
+28/42 Test #29: IdentifyChord.TwoNotesAreNotAFullChordYet ................................   Passed    0.00 sec
+      Start 30: IdentifyChord.ThreeNotesSideBySideAreNotAChord
+29/42 Test #30: IdentifyChord.ThreeNotesSideBySideAreNotAChord ...........................   Passed    0.00 sec
+      Start 31: DetectKey.KeyIsFoundFromTheChordsThemselves
+30/42 Test #31: DetectKey.KeyIsFoundFromTheChordsThemselves ..............................   Passed    0.00 sec
+      Start 32: DetectKey.NothingPlayedYetGivesNoKey
+31/42 Test #32: DetectKey.NothingPlayedYetGivesNoKey .....................................   Passed    0.00 sec
+      Start 33: DetectKey.MinorSongIsPlacedInItsRelativeMajor
+32/42 Test #33: DetectKey.MinorSongIsPlacedInItsRelativeMajor ............................   Passed    0.00 sec
+      Start 34: DetectKey.OneChordOutsideTheKeyDoesNotChangeTheKey
+33/42 Test #34: DetectKey.OneChordOutsideTheKeyDoesNotChangeTheKey .......................   Passed    0.00 sec
+      Start 35: NoteInput.UiChordIsRecognizedAndDescribed
+34/42 Test #35: NoteInput.UiChordIsRecognizedAndDescribed ................................   Passed    0.00 sec
+      Start 36: NoteInput.MouseHitTestSuppliesANoteThatUiCanRelease
+35/42 Test #36: NoteInput.MouseHitTestSuppliesANoteThatUiCanRelease ......................   Passed    0.00 sec
+      Start 37: NoteInput.MidiAndUiNotesCombineIntoOneChord
+36/42 Test #37: NoteInput.MidiAndUiNotesCombineIntoOneChord ..............................   Passed    0.00 sec
+      Start 38: NoteInput.OutsideMouseHitAddsNothingToMidiNotes
+37/42 Test #38: NoteInput.OutsideMouseHitAddsNothingToMidiNotes ..........................   Passed    0.00 sec
+      Start 39: NoteInput.ReleasingUiNotesPreservesMidiChordUntilMidiReleases
+38/42 Test #39: NoteInput.ReleasingUiNotesPreservesMidiChordUntilMidiReleases ............   Passed    0.00 sec
+      Start 40: ChordProgression.RecognizedProgressionProducesCMajorKey
+39/42 Test #40: ChordProgression.RecognizedProgressionProducesCMajorKey ..................   Passed    0.00 sec
+      Start 41: ChordProgression.EmptyIncompleteAndUnrecognizedInputProducesNoKey
+40/42 Test #41: ChordProgression.EmptyIncompleteAndUnrecognizedInputProducesNoKey ........   Passed    0.00 sec
+      Start 42: ChordProgression.OutsideKeyChordDoesNotOverrideEstablishedProgression
+41/42 Test #42: ChordProgression.OutsideKeyChordDoesNotOverrideEstablishedProgression ....   Passed    0.00 sec
+      Start 43: ChordProgression.InvertedChordsContributeTheirRootsRatherThanBassNotes
+42/42 Test #43: ChordProgression.InvertedChordsContributeTheirRootsRatherThanBassNotes ...   Passed    0.00 sec
+
+100% tests passed, 0 tests failed out of 42
+
+Label Time Summary:
+unit    =   0.12 sec*proc (42 tests)
+
+Total Test time (real) =   0.13 sec
+\end{lstlisting}
+
+\section{Bugs found and fixed}
+% Group members: enter your discussion here.
+\vspace{1cm}
+
+\section{Remaining failures and limitations}
+No tests failed in the supplied run. Coverage excludes real devices, audio,
+rendering, QWERTY mapping, mouse latching, concurrency and the full MainApp loop.
+Component tests do not execute UI frame timing or history management.
+ChordLogic supports its implemented major-triad table; UI still uses
+ChordTheory. Invalid NoteState input rejection and other operating systems
+need further testing.
+
+\section{Repository}
+\url{https://github.com/VerazKnight/ChordCompanion}
+
+\section{README}
+\begin{lstlisting}[literate={’}{{\textquoteright}}1]
+# ChordCompanion
+
+Group project for Software Engineering: a piano and chord-learning application.
+
+Run all commands below from the repository root.
+
+## Initialize dependencies
+
+After cloning, run:
+
+```sh
+git submodule update --init --recursive
+```
+
+This downloads the bundled dependencies.
+
+### Windows
+
+With Visual Studio’s C++ build tools installed, using the Visual Studio generator, from the root: 
+
+```powershell
+cmake -S . -B build -A x64 -DBUILD_TESTING=ON
+cmake --build build --config Debug --target ChordCompanion --parallel 2
+.\build\Debug\ChordCompanion.exe
+```
+
+After configuring with the Windows commands above, run tests with:
+
+```powershell
+cmake --build build --config Debug --target check --parallel 2
+```
+
+### Linux / Mac
+
+With the project's dependencies installed, from the root:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+cmake --build build --target ChordCompanion --parallel 2
+./build/ChordCompanion
+```
+
+Then build and run all unit tests:
+
+```sh
+cmake --build build --target check --parallel 2
+```
+
+### Test output
+
+The `check` target rebuilds the tests before running them, prints diagnostic
+output for failures, and returns a nonzero exit code if a test fails.
+\end{lstlisting}
+
+\end{document}
